@@ -31,6 +31,10 @@
 class nsIStorageStream;
 class nsIWebBrowserPersistDocument;
 
+namespace mozilla {
+class MHTMLPersist;
+}
+
 using ClosePromise = mozilla::MozPromise<nsresult, nsresult, true>;
 
 class nsWebBrowserPersist final : public nsIInterfaceRequestor,
@@ -134,6 +138,17 @@ class nsWebBrowserPersist final : public nsIInterfaceRequestor,
 
   void SetApplyConversionIfNeeded(nsIChannel* aChannel);
 
+  bool IsSavingAsMHTML() const {
+    return !!(mPersistFlags & PERSIST_FLAGS_SAVE_AS_MHTML);
+  }
+  nsresult SerializeAsMHTML();
+  struct MHTMLResourceData;
+  nsresult CollectMHTMLResource(nsIRequest* aRequest, nsIInputStream* aStream,
+                                uint64_t aOffset, uint32_t aCount);
+  void ExtractCSSResources(const nsCString& aCSS, nsIURI* aBaseURI,
+                           nsTArray<nsCString>& aURLs);
+  nsresult DownloadCSSResources();
+
   nsCOMPtr<nsIURI> mCurrentDataPath;
   bool mCurrentDataPathIsRelative;
   nsCString mCurrentRelativePathToData;
@@ -183,6 +198,9 @@ class nsWebBrowserPersist final : public nsIInterfaceRequestor,
   int16_t mWrapColumn;
   uint32_t mEncodingFlags;
   nsString mContentType;
+
+  mozilla::UniquePtr<mozilla::MHTMLPersist> mMHTMLPersist;
+  nsClassHashtable<nsISupportsHashKey, MHTMLResourceData> mMHTMLResources;
 };
 
 #endif

@@ -22,6 +22,7 @@ IPDL_SOURCES += [
 ]
 
 UNIFIED_SOURCES += [
+    "nsMHTMLPersist.cpp",
     "nsWebBrowserPersist.cpp",
     "WebBrowserPersistDocumentChild.cpp",
     "WebBrowserPersistDocumentParent.cpp",

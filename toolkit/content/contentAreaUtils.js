@@ -199,10 +199,12 @@ DownloadListener.prototype = {
   },
 };
 
-const kSaveAsType_Complete = 0; // Save document with attached objects.
+const kSaveAsType_Complete = 0; // Save document with attached objects (filter index 0).
 XPCOMUtils.defineConstant(this, "kSaveAsType_Complete", 0);
-// const kSaveAsType_URL      = 1; // Save document or URL by itself.
-const kSaveAsType_Text = 2; // Save document, converting to plain text.
+// const kSaveAsType_URL      = 1; // Save document or URL by itself (filter index 1).
+const kSaveAsType_MHTML = 2; // Save as MHTML (single file, multipart) (filter index 2).
+XPCOMUtils.defineConstant(this, "kSaveAsType_MHTML", kSaveAsType_MHTML);
+const kSaveAsType_Text = 3; // Save document, converting to plain text (varies by filter order).
 XPCOMUtils.defineConstant(this, "kSaveAsType_Text", kSaveAsType_Text);
 
 /**
@@ -365,13 +367,17 @@ function internalSave(
 
   function continueSave() {
     // XXX We depend on the following holding true in appendFiltersForContentType():
-    // If we should save as a complete page, the saveAsType is kSaveAsType_Complete.
-    // If we should save as text, the saveAsType is kSaveAsType_Text.
+    // Filter index 0 = kSaveAsType_Complete (Web Page, complete)
+    // Filter index 1 = HTML only
+    // Filter index 2 = kSaveAsType_MHTML (Web Page, MHTML single file)
+    // Filter index 3+ = kSaveAsType_Text (Text files) or All files
     var useSaveDocument =
       aDocument &&
       ((saveMode & SAVEMODE_COMPLETE_DOM &&
-        saveAsType == kSaveAsType_Complete) ||
-        (saveMode & SAVEMODE_COMPLETE_TEXT && saveAsType == kSaveAsType_Text));
+        (saveAsType == kSaveAsType_Complete || 
+         saveAsType == 1 || // HTML only
+         saveAsType == kSaveAsType_MHTML)) ||
+        (saveMode & SAVEMODE_COMPLETE_TEXT && saveAsType >= kSaveAsType_Text));
     // If we're saving a document, and are saving either in complete mode or
     // as converted text, pass the document to the web browser persist component.
     // If we're just saving the HTML (second option in the list), send only the URI.
@@ -411,6 +417,7 @@ function internalSave(
       cookieJarSettings: aCookieJarSettings,
       isPrivate,
       saveCompleteCallback: aSaveCompleteCallback,
+      saveAsType,
     };
 
     // Start the actual save process
@@ -471,6 +478,11 @@ function internalPersist(persistArgs) {
 
   // Leave it to WebBrowserPersist to discover the encoding type (or lack thereof):
   persist.persistFlags |= nsIWBP.PERSIST_FLAGS_AUTODETECT_APPLY_CONVERSION;
+
+  // Enable MHTML if user selected MHTML format in save dialog
+  if (persistArgs.saveAsType == kSaveAsType_MHTML) {
+    persist.persistFlags |= nsIWBP.PERSIST_FLAGS_SAVE_AS_MHTML;
+  }
 
   // Find the URI associated with the target file
   var targetFileURL = makeFileURI(persistArgs.targetFile);
@@ -768,6 +780,19 @@ function promiseTargetFile(
     aFpP.file = fp.file;
     aFpP.file.leafName = validateFileName(aFpP.file.leafName);
 
+    // Change extension to .mhtml if MHTML format was selected
+    if (aFpP.saveAsType == kSaveAsType_MHTML) {
+      let leafName = aFpP.file.leafName;
+      // Replace .html/.htm extension with .mhtml
+      if (leafName.match(/\.(html?|xhtml?)$/i)) {
+        leafName = leafName.replace(/\.(html?|xhtml?)$/i, ".mhtml");
+      } else if (!leafName.endsWith(".mhtml") && !leafName.endsWith(".mht")) {
+        // If no extension or different extension, append .mhtml
+        leafName += ".mhtml";
+      }
+      aFpP.file.leafName = leafName;
+    }
+
     return true;
   })();
 }
@@ -938,15 +963,20 @@ function appendFiltersForContentType(
   }
 
   if (aSaveMode & SAVEMODE_COMPLETE_DOM) {
+    // Filter index 0: Web Page, complete
     aFilePicker.appendFilter(
       ContentAreaUtils.stringBundle.GetStringFromName("WebPageCompleteFilter"),
       filterString
     );
-    // We should always offer a choice to save document only if
-    // we allow saving as complete.
+    // Filter index 1: Web Page, HTML only
     aFilePicker.appendFilter(
       ContentAreaUtils.stringBundle.GetStringFromName(bundleName),
       filterString
+    );
+    // Filter index 2: Web Page, MHTML (single file)
+    aFilePicker.appendFilter(
+      ContentAreaUtils.stringBundle.GetStringFromName("WebPageMHTMLFilter"),
+      "*.mhtml; *.mht"
     );
   }
 

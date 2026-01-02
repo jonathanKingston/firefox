@@ -16,3 +16,9 @@ support-files = [
 
 ["browser_save_form_input_state.js"]
 support-files = ["file_form_state.html"]
+
+["browser_persist_mhtml.js"]
+support-files = [
+  "file_persist_simple.html",
+  "file_persist_image.png",
+]

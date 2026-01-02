@@ -45,6 +45,8 @@ EXTRA_JS_MODULES += [
     "MHTMLParser.sys.mjs",
 ]
 
+XPCSHELL_TESTS_MANIFESTS += ["test/unit/xpcshell.toml"]
+
 include("/ipc/chromium/chromium-config.mozbuild")
 
 FINAL_LIBRARY = "xul"

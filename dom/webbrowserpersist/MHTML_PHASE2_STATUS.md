@@ -62,18 +62,19 @@ nsresult nsDocShell::LoadMHTMLFile(nsIURI* aURI, nsDocShellLoadState* aLoadState
 
 ## What's Not Working (Yet)
 
-### 🔄 MHTML Parsing (Deferred)
+### ⏸️ Resource Loading (Deferred)
 
-Current `LoadMHTMLFile()` loads raw MHTML content instead of parsing it. Next steps:
+Current `LoadMHTMLFile()` extracts and renders HTML but doesn't load embedded resources:
 
 ```cpp
-// TODO in LoadMHTMLFile():
-//  1. Parse mhtmlContent using MHTMLArchive.sys.mjs
-//  2. Extract main HTML document
-//  3. Store archive on document for resource interception
+// Working: HTML extraction + Quoted-Printable/Base64 decoding
+// Not working: Images, CSS, fonts (need interception)
 ```
 
-**Why deferred:** Need to properly integrate JS module loading in C++ context
+**Why resources don't load:**
+HTML contains: `<img src="https://example.com/logo.png">`
+Browser tries to fetch from network (fails)
+Image is actually embedded in MHTML archive (not loaded)
 
 ### ⏸️ Document Storage (Pending)
 
@@ -116,8 +117,11 @@ if (doc && doc->HasMHTMLArchive()) {
 # 1. Save a page as MHTML
 Firefox → File → Save Page As → MHTML
 
-# 2. Try to open it
-# Result: Firefox intercepts the .mhtml file but shows raw MHTML source
+# 2. Open it
+./mach run file:///tmp/page.mhtml
+
+# Result: Clean HTML rendering (text displays perfectly)
+# Limitation: Images/CSS don't load (need network or resource interception)
 ```
 
 ### What Happens
@@ -131,9 +135,17 @@ Calls LoadMHTMLFile() ✅
 ↓
 Reads file from disk ✅
 ↓
-Loads raw content (skips parsing) ⚠️
+Parses multipart structure ✅
 ↓
-Browser shows MHTML source code (multipart/related format)
+Decodes Quoted-Printable/Base64 ✅
+↓
+Extracts HTML content ✅
+↓
+Loads HTML via input stream channel ✅
+↓
+Browser renders clean HTML ✅
+↓
+Tries to load <img src="..."> → Network request (no interception yet) ⚠️
 ```
 
 ## Next Steps

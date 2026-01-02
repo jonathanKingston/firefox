@@ -8,6 +8,8 @@
 #define nsDocShell_h__
 
 #include "Units.h"
+#include "jsapi.h"
+#include "js/RootingAPI.h"
 #include "mozilla/Encoding.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/NotNull.h"
@@ -728,7 +730,8 @@ class nsDocShell final : public nsDocLoader,
                                          nsILoadInfo* aLoadInfo);
 
   MOZ_CAN_RUN_SCRIPT nsresult LoadMHTMLFile(nsIURI* aURI,
-                                             nsDocShellLoadState* aLoadState);
+                                             nsDocShellLoadState* aLoadState,
+                                             nsIRequest** aRequest);
 
   static nsresult AddHeadersToChannel(nsIInputStream* aHeadersData,
                                       nsIChannel* aChannel);
@@ -1400,6 +1403,9 @@ class nsDocShell final : public nsDocLoader,
   uint64_t mChannelToDisconnectOnPageHide;
 
   uint32_t mPendingReloadCount = 0;
+
+  // MHTML archive for resource interception (JS object)
+  JS::Heap<JSObject*> mMHTMLArchive;
 
   // The following two fields cannot be declared as bit fields
   // because of uses with AutoRestore.

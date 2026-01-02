@@ -44,23 +44,23 @@ Content-Location: https://example.com/test.html
 
     let tab = await BrowserTestUtils.openNewForegroundTab(
       gBrowser,
-      fileURI.spec
+      fileURI.spec,
+      true /* wait for load */
     );
 
-    // Give it time to load
-    await BrowserTestUtils.browserLoaded(tab.linkedBrowser);
+    // Give MHTML parsing a moment to complete
+    await TestUtils.waitForTick();
 
     let doc = tab.linkedBrowser.contentDocument;
     ok(doc, "Document should be loaded");
 
-    // Check if content loaded (even if MHTML parsing isn't complete yet)
+    // Check if content loaded
     let body = doc.body;
     ok(body, "Document should have body");
 
     info(`Document title: ${doc.title}`);
     info(`Body text length: ${body.textContent.length}`);
 
-    // The current implementation loads raw MHTML, so we'll just verify it loaded something
     Assert.greater(body.textContent.length, 0, "Document should have content");
 
     await BrowserTestUtils.removeTab(tab);
@@ -142,10 +142,12 @@ add_task(async function test_mhtml_save_and_load() {
     let mhtmlURI = Services.io.newFileURI(mhtmlFile);
     let mhtmlTab = await BrowserTestUtils.openNewForegroundTab(
       gBrowser,
-      mhtmlURI.spec
+      mhtmlURI.spec,
+      true /* wait for load */
     );
 
-    await BrowserTestUtils.browserLoaded(mhtmlTab.linkedBrowser);
+    // Give MHTML parsing a moment to complete
+    await TestUtils.waitForTick();
 
     let doc = mhtmlTab.linkedBrowser.contentDocument;
     ok(doc, "MHTML document should load");
@@ -185,9 +187,12 @@ add_task(async function test_fake_mhtml_extension() {
     let fileURI = Services.io.newFileURI(file);
     let tab = await BrowserTestUtils.openNewForegroundTab(
       gBrowser,
-      fileURI.spec
+      fileURI.spec,
+      true /* wait for load */
     );
-    await BrowserTestUtils.browserLoaded(tab.linkedBrowser);
+    
+    // Give it a moment to complete
+    await TestUtils.waitForTick();
 
     let doc = tab.linkedBrowser.contentDocument;
     ok(doc, "Document should load even if not real MHTML");

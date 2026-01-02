@@ -727,6 +727,9 @@ class nsDocShell final : public nsDocLoader,
   nsresult CompleteInitialAboutBlankLoad(nsDocShellLoadState* aLoadState,
                                          nsILoadInfo* aLoadInfo);
 
+  MOZ_CAN_RUN_SCRIPT nsresult LoadMHTMLFile(nsIURI* aURI,
+                                             nsDocShellLoadState* aLoadState);
+
   static nsresult AddHeadersToChannel(nsIInputStream* aHeadersData,
                                       nsIChannel* aChannel);
 

@@ -40,6 +40,11 @@ EXPORTS.mozilla += [
     "WebBrowserPersistLocalDocument.h",
 ]
 
+EXTRA_JS_MODULES += [
+    "MHTMLArchive.sys.mjs",
+    "MHTMLParser.sys.mjs",
+]
+
 include("/ipc/chromium/chromium-config.mozbuild")
 
 FINAL_LIBRARY = "xul"

@@ -7,6 +7,8 @@
 #include "nsDocShell.h"
 
 #include <algorithm>
+#include <cctype>
+#include "mozilla/Base64.h"
 #include "mozilla/dom/HTMLFormElement.h"
 
 #ifdef XP_WIN
@@ -10736,6 +10738,18 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
     return NS_OK;
   }
 
+  // Check if this is an MHTML file (before normal loading)
+  nsCOMPtr<nsIURI> loadURI = aLoadState->URI();
+  if (loadURI && loadURI->SchemeIs("file")) {
+    nsAutoCString path;
+    nsresult rv = loadURI->GetFilePath(path);
+    if (NS_SUCCEEDED(rv)) {
+      if (StringEndsWith(path, ".mhtml"_ns) || StringEndsWith(path, ".mht"_ns)) {
+        return LoadMHTMLFile(loadURI, aLoadState);
+      }
+    }
+  }
+
   nsCOMPtr<nsIURILoader> uriLoader = components::URILoader::Service();
   if (NS_WARN_IF(!uriLoader)) {
     return NS_ERROR_UNEXPECTED;
@@ -11196,6 +11210,161 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
   uint32_t openFlags =
       nsDocShell::ComputeURILoaderFlags(mBrowsingContext, mLoadType);
   return OpenInitializedChannel(channel, uriLoader, openFlags);
+}
+
+nsresult nsDocShell::LoadMHTMLFile(nsIURI* aURI,
+                                   nsDocShellLoadState* aLoadState) {
+  MOZ_ASSERT(aURI);
+  
+  // Get file from URI
+  nsCOMPtr<nsIFile> file;
+  nsresult rv = NS_GetFileFromURLSpec(aURI->GetSpecOrDefault(), getter_AddRefs(file));
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  // Read file contents
+  nsCOMPtr<nsIInputStream> inputStream;
+  rv = NS_NewLocalFileInputStream(getter_AddRefs(inputStream), file);
+  if (NS_FAILED(rv)) {
+    // Common failure: macOS sandbox blocking ~/Documents, ~/Desktop, etc.
+    // User needs to grant Firefox permission in System Settings
+    NS_WARNING("Failed to open MHTML file - check file permissions and macOS sandbox settings");
+    return rv;
+  }
+
+  uint64_t fileSize;
+  rv = inputStream->Available(&fileSize);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  nsCString mhtmlContent;
+  rv = NS_ReadInputStreamToString(inputStream, mhtmlContent,
+                                   static_cast<uint32_t>(fileSize));
+  inputStream->Close();
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  // Simple MHTML parsing: extract HTML from first text/html part
+  // TODO: Full implementation with MHTMLArchive.sys.mjs for resource handling
+  nsCString htmlContent;
+  
+  // Find first Content-Type: text/html
+  int32_t htmlStart = mhtmlContent.Find("Content-Type: text/html");
+  if (htmlStart == kNotFound) {
+    // Not MHTML or no HTML part, load as-is
+    htmlContent = mhtmlContent;
+  } else {
+    // Check for Content-Transfer-Encoding
+    bool isQuotedPrintable = false;
+    bool isBase64 = false;
+    
+    int32_t encodingPos = mhtmlContent.Find("Content-Transfer-Encoding:", htmlStart);
+    if (encodingPos != kNotFound && encodingPos < htmlStart + 500) {
+      int32_t lineEnd = mhtmlContent.FindChar('\n', encodingPos);
+      if (lineEnd != kNotFound) {
+        nsCString encoding;
+        encoding.Assign(Substring(mhtmlContent, encodingPos + 26, lineEnd - encodingPos - 26));
+        encoding.Trim(" \r\n\t");
+        if (encoding.EqualsLiteral("quoted-printable")) {
+          isQuotedPrintable = true;
+        } else if (encoding.EqualsLiteral("base64")) {
+          isBase64 = true;
+        }
+      }
+    }
+    
+    // Skip to after headers (blank line)
+    int32_t bodyStart = mhtmlContent.Find("\n\n", htmlStart);
+    if (bodyStart == kNotFound) {
+      bodyStart = mhtmlContent.Find("\r\n\r\n", htmlStart);
+      if (bodyStart != kNotFound) {
+        bodyStart += 4;
+      }
+    } else {
+      bodyStart += 2;
+    }
+    
+    if (bodyStart != kNotFound) {
+      // Find next boundary (starts with --)
+      int32_t bodyEnd = mhtmlContent.Find("\n--", bodyStart);
+      if (bodyEnd == kNotFound) {
+        bodyEnd = mhtmlContent.Length();
+      }
+      
+      nsCString encodedContent;
+      encodedContent.Assign(Substring(mhtmlContent, bodyStart, bodyEnd - bodyStart));
+      
+      // Decode if needed
+      if (isQuotedPrintable) {
+        // Decode quoted-printable: =XX -> char, = at line end -> soft break
+        htmlContent.Truncate();
+        for (uint32_t i = 0; i < encodedContent.Length(); i++) {
+          if (encodedContent[i] == '=' && i + 2 < encodedContent.Length()) {
+            char next1 = encodedContent[i + 1];
+            char next2 = encodedContent[i + 2];
+            
+            // Soft line break (= at end of line)
+            if (next1 == '\r' || next1 == '\n') {
+              i++; // Skip the =
+              if (next1 == '\r' && next2 == '\n') {
+                i++; // Skip CRLF
+              }
+              continue;
+            }
+            
+            // Hex decode
+            if (std::isxdigit(static_cast<unsigned char>(next1)) && 
+                std::isxdigit(static_cast<unsigned char>(next2))) {
+              char hex[3] = {next1, next2, 0};
+              uint32_t value = strtoul(hex, nullptr, 16);
+              htmlContent.Append(char(value));
+              i += 2;
+              continue;
+            }
+          }
+          htmlContent.Append(encodedContent[i]);
+        }
+      } else if (isBase64) {
+        // Base64 decode
+        rv = mozilla::Base64Decode(encodedContent, htmlContent);
+        if (NS_FAILED(rv)) {
+          htmlContent = encodedContent;
+        }
+      } else {
+        htmlContent = encodedContent;
+      }
+    } else {
+      htmlContent = mhtmlContent;
+    }
+  }
+  
+  // Load extracted HTML content
+  nsCOMPtr<nsIInputStream> htmlStream;
+  rv = NS_NewCStringInputStream(getter_AddRefs(htmlStream), htmlContent);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  nsCOMPtr<nsIChannel> channel;
+  rv = NS_NewInputStreamChannel(
+      getter_AddRefs(channel), aURI, htmlStream.forget(),
+      nsContentUtils::GetSystemPrincipal(), 
+      nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
+      nsIContentPolicy::TYPE_DOCUMENT, "text/html"_ns);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  // Load the channel
+  nsCOMPtr<nsIURILoader> uriLoader = components::URILoader::Service();
+  if (!uriLoader) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  return uriLoader->OpenURI(channel, nsIURILoader::DONT_RETARGET, this);
 }
 
 nsresult nsDocShell::CompleteInitialAboutBlankLoad(

@@ -10,8 +10,10 @@
 
 #include "ReferrerInfo.h"
 #include "WebBrowserPersistLocalDocument.h"
+#include "mozilla/Logging.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/Printf.h"
+#include "mozilla/SpinEventLoopUntil.h"
 #include "mozilla/TextUtils.h"
 #include "mozilla/WebBrowserPersistDocumentParent.h"
 #include "mozilla/dom/BrowserParent.h"
@@ -49,14 +51,12 @@
 #include "nsIURL.h"
 #include "nsIUploadChannel.h"
 #include "nsIWebProgressListener.h"
+#include "nsMHTMLPersist.h"
 #include "nsNetCID.h"
 #include "nsNetUtil.h"
 #include "nsStreamUtils.h"
-#include "nspr.h"
-#include "nsMHTMLPersist.h"
 #include "nsThreadUtils.h"
-#include "mozilla/SpinEventLoopUntil.h"
-#include "mozilla/Logging.h"
+#include "nspr.h"
 
 static mozilla::LazyLogModule gMHTMLLog("MHTML");
 #define MHTML_LOG(args) MOZ_LOG(gMHTMLLog, mozilla::LogLevel::Debug, args)
@@ -294,9 +294,12 @@ const uint32_t kDefaultPersistFlags =
 
 static void DumpPersistFlags(uint32_t flags) {
   printf("PersistFlags: 0x%x (", flags);
-  if (flags & nsIWebBrowserPersist::PERSIST_FLAGS_SAVE_AS_MHTML) printf("MHTML ");
-  if (flags & nsIWebBrowserPersist::PERSIST_FLAGS_FROM_CACHE) printf("FROM_CACHE ");
-  if (flags & nsIWebBrowserPersist::PERSIST_FLAGS_BYPASS_CACHE) printf("BYPASS_CACHE ");
+  if (flags & nsIWebBrowserPersist::PERSIST_FLAGS_SAVE_AS_MHTML)
+    printf("MHTML ");
+  if (flags & nsIWebBrowserPersist::PERSIST_FLAGS_FROM_CACHE)
+    printf("FROM_CACHE ");
+  if (flags & nsIWebBrowserPersist::PERSIST_FLAGS_BYPASS_CACHE)
+    printf("BYPASS_CACHE ");
   printf(")\n");
 }
 
@@ -470,7 +473,6 @@ NS_IMETHODIMP nsWebBrowserPersist::SaveDocument(nsISupports* aDocument,
                                                 const char* aOutputContentType,
                                                 uint32_t aEncodingFlags,
                                                 uint32_t aWrapColumn) {
-  
   NS_ENSURE_TRUE(mFirstAndOnlyUse, NS_ERROR_FAILURE);
   mFirstAndOnlyUse = false;  // Stop people from reusing this object!
 
@@ -590,7 +592,8 @@ void nsWebBrowserPersist::SerializeNextFile() {
 
   // Persist each file in the uri map. The document(s)
   // will be saved after the last one of these is saved.
-  // For MHTML, resources will be collected via OnDataAvailable instead of written to files.
+  // For MHTML, resources will be collected via OnDataAvailable instead of
+  // written to files.
   for (const auto& entry : mURIMap) {
     URIData* data = entry.GetWeak();
 
@@ -675,7 +678,7 @@ void nsWebBrowserPersist::SerializeNextFile() {
     }
     return;
   }
-  
+
   mozilla::UniquePtr<DocData> docData(mDocList.ElementAt(0));
   mDocList.RemoveElementAt(0);  // O(n^2) but probably doesn't matter.
   MOZ_ASSERT(docData);
@@ -793,7 +796,7 @@ NS_IMETHODIMP nsWebBrowserPersist::OnStartRequest(nsIRequest* request) {
     nsCOMPtr<nsIURI> uri;
     channel->GetURI(getter_AddRefs(uri));
   }
-  
+
   if (mProgressListener) {
     uint32_t stateFlags = nsIWebProgressListener::STATE_START |
                           nsIWebProgressListener::STATE_IS_REQUEST;
@@ -981,7 +984,7 @@ nsWebBrowserPersist::OnDataAvailable(nsIRequest* request,
                                      nsIInputStream* aIStream, uint64_t aOffset,
                                      uint32_t aLength) {
   // MOZ_ASSERT(!NS_IsMainThread()); // no guarantees, but it's likely.
-  
+
   if (IsSavingAsMHTML()) {
     nsresult rv = CollectMHTMLResource(request, aIStream, aOffset, aLength);
     if (NS_FAILED(rv)) {
@@ -2441,7 +2444,7 @@ nsresult nsWebBrowserPersist::StoreURI(nsIURI* aURI,
                                        nsContentPolicyType aContentPolicyType,
                                        bool aNeedsPersisting, URIData** aData) {
   NS_ENSURE_ARG_POINTER(aURI);
-  
+
   if (aData) {
     *aData = nullptr;
   }
@@ -2744,7 +2747,7 @@ void nsWebBrowserPersist::SetApplyConversionIfNeeded(nsIChannel* aChannel) {
   }
 }
 
-nsresult nsWebBrowserPersist::CollectMHTMLResource(nsIRequest* aRequest, 
+nsresult nsWebBrowserPersist::CollectMHTMLResource(nsIRequest* aRequest,
                                                    nsIInputStream* aStream,
                                                    uint64_t aOffset,
                                                    uint32_t aCount) {
@@ -2753,13 +2756,13 @@ nsresult nsWebBrowserPersist::CollectMHTMLResource(nsIRequest* aRequest,
 
   nsCOMPtr<nsISupports> keyPtr = do_QueryInterface(aRequest);
   MHTMLResourceData* data = mMHTMLResources.Get(keyPtr);
-  
+
   if (!data) {
     nsCOMPtr<nsIURI> uri;
     channel->GetURI(getter_AddRefs(uri));
     nsAutoCString contentType;
     channel->GetContentType(contentType);
-    
+
     auto newData = MakeUnique<MHTMLResourceData>(uri, contentType);
     data = newData.get();
     mMHTMLResources.InsertOrUpdate(keyPtr, std::move(newData));
@@ -2769,15 +2772,16 @@ nsresult nsWebBrowserPersist::CollectMHTMLResource(nsIRequest* aRequest,
   while (totalRead < aCount) {
     char buffer[8192];
     uint32_t bytesRead = 0;
-    nsresult rv = aStream->Read(buffer, std::min(uint32_t(sizeof(buffer)), 
-                                aCount - totalRead), &bytesRead);
+    nsresult rv = aStream->Read(
+        buffer, std::min(uint32_t(sizeof(buffer)), aCount - totalRead),
+        &bytesRead);
     NS_ENSURE_SUCCESS(rv, rv);
-    
+
     if (bytesRead == 0) {
       break;
     }
-    
-    data->mData.AppendElements(reinterpret_cast<const uint8_t*>(buffer), 
+
+    data->mData.AppendElements(reinterpret_cast<const uint8_t*>(buffer),
                                bytesRead);
     totalRead += bytesRead;
   }
@@ -2786,32 +2790,33 @@ nsresult nsWebBrowserPersist::CollectMHTMLResource(nsIRequest* aRequest,
 }
 
 // Extract URLs from CSS content (for fonts, images, etc.)
-void nsWebBrowserPersist::ExtractCSSResources(const nsCString& aCSS, 
-                                               nsIURI* aBaseURI,
-                                               nsTArray<nsCString>& aURLs) {
+void nsWebBrowserPersist::ExtractCSSResources(const nsCString& aCSS,
+                                              nsIURI* aBaseURI,
+                                              nsTArray<nsCString>& aURLs) {
   // Simple regex-like parsing for url() references in CSS
   const char* src = aCSS.BeginReading();
   const char* end = aCSS.EndReading();
-  
+
   while (src < end) {
     // Find "url("
     const char* urlStart = strstr(src, "url(");
     if (!urlStart) break;
-    
-    urlStart += 4; // Skip "url("
-    
+
+    urlStart += 4;  // Skip "url("
+
     // Skip whitespace
-    while (urlStart < end && (*urlStart == ' ' || *urlStart == '\t' || *urlStart == '\n')) {
+    while (urlStart < end &&
+           (*urlStart == ' ' || *urlStart == '\t' || *urlStart == '\n')) {
       urlStart++;
     }
-    
+
     // Check for quotes
     char quoteChar = 0;
     if (*urlStart == '"' || *urlStart == '\'') {
       quoteChar = *urlStart;
       urlStart++;
     }
-    
+
     // Find the end of the URL
     const char* urlEnd = urlStart;
     if (quoteChar) {
@@ -2821,21 +2826,22 @@ void nsWebBrowserPersist::ExtractCSSResources(const nsCString& aCSS,
       }
     } else {
       // Find closing paren or whitespace
-      while (urlEnd < end && *urlEnd != ')' && *urlEnd != ' ' && *urlEnd != '\t' && *urlEnd != '\n') {
+      while (urlEnd < end && *urlEnd != ')' && *urlEnd != ' ' &&
+             *urlEnd != '\t' && *urlEnd != '\n') {
         urlEnd++;
       }
     }
-    
+
     if (urlEnd > urlStart) {
       nsCString url(Substring(urlStart, urlEnd));
       url.Trim(" \t\n\r");
-      
+
       // Skip data: URLs
       if (!url.IsEmpty() && !StringBeginsWith(url, "data:"_ns)) {
         aURLs.AppendElement(url);
       }
     }
-    
+
     src = urlEnd + 1;
   }
 }
@@ -2843,30 +2849,32 @@ void nsWebBrowserPersist::ExtractCSSResources(const nsCString& aCSS,
 // Download additional CSS resources (fonts, images referenced in CSS)
 nsresult nsWebBrowserPersist::DownloadCSSResources() {
   nsTArray<nsCString> urlsToDownload;
-  
+
   // First pass: extract URLs from all CSS resources
   for (const auto& entry : mMHTMLResources) {
     MHTMLResourceData* resData = entry.GetWeak();
     if (!resData || resData->mData.IsEmpty()) continue;
-    
+
     // Check if this is a CSS file
     if (!resData->mContentType.EqualsLiteral("text/css")) continue;
-    
+
     // Convert data to string
-    nsCString cssContent(reinterpret_cast<const char*>(resData->mData.Elements()), 
-                        resData->mData.Length());
-    
+    nsCString cssContent(
+        reinterpret_cast<const char*>(resData->mData.Elements()),
+        resData->mData.Length());
+
     nsTArray<nsCString> urls;
     ExtractCSSResources(cssContent, resData->mURI, urls);
-    
+
     // Resolve relative URLs and add to download list
     for (const auto& relURL : urls) {
       nsCOMPtr<nsIURI> resolvedURI;
-      nsresult rv = NS_NewURI(getter_AddRefs(resolvedURI), relURL, nullptr, resData->mURI);
+      nsresult rv = NS_NewURI(getter_AddRefs(resolvedURI), relURL, nullptr,
+                              resData->mURI);
       if (NS_SUCCEEDED(rv)) {
         nsAutoCString spec;
         resolvedURI->GetSpec(spec);
-        
+
         // Check if we already have this resource
         bool alreadyHave = false;
         for (const auto& existing : mMHTMLResources) {
@@ -2880,20 +2888,20 @@ nsresult nsWebBrowserPersist::DownloadCSSResources() {
             }
           }
         }
-        
+
         if (!alreadyHave && !urlsToDownload.Contains(spec)) {
           urlsToDownload.AppendElement(spec);
         }
       }
     }
   }
-  
+
   // TODO: Actually download these URLs
   // For now, we just return - full implementation would need to:
   // 1. Create channels for each URL
   // 2. Download them asynchronously
   // 3. Wait for completion before serializing
-  
+
   return NS_OK;
 }
 
@@ -2912,8 +2920,7 @@ class MHTMLSyncWriteCompletion final
   ~MHTMLSyncWriteCompletion() = default;
 };
 
-NS_IMPL_ISUPPORTS(MHTMLSyncWriteCompletion,
-                  nsIWebBrowserPersistWriteCompletion)
+NS_IMPL_ISUPPORTS(MHTMLSyncWriteCompletion, nsIWebBrowserPersistWriteCompletion)
 
 NS_IMETHODIMP
 MHTMLSyncWriteCompletion::OnFinish(nsIWebBrowserPersistDocument* aDocument,
@@ -2939,7 +2946,7 @@ nsresult nsWebBrowserPersist::SerializeAsMHTML() {
   NS_ENSURE_SUCCESS(rv, rv);
 
   DocData* mainDoc = mDocList[0];
-  
+
   nsCOMPtr<nsIOutputStream> outputStream;
   rv = MakeOutputStream(mainDoc->mFile, getter_AddRefs(outputStream));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -2965,14 +2972,15 @@ nsresult nsWebBrowserPersist::SerializeAsMHTML() {
 
     RefPtr<MHTMLSyncWriteCompletion> completion =
         new MHTMLSyncWriteCompletion();
-    
-    // For MHTML, we must NOT include noscript content since we assume JavaScript is enabled
-    uint32_t encodingFlags = mEncodingFlags & ~nsIWebBrowserPersist::ENCODE_FLAGS_NOSCRIPT_CONTENT;
-    
-    rv = docData->mDocument->WriteContent(docStream, flatMap,
-                                          NS_ConvertUTF16toUTF8(mContentType),
-                                          encodingFlags, mWrapColumn,
-                                          completion);
+
+    // For MHTML, we must NOT include noscript content since we assume
+    // JavaScript is enabled
+    uint32_t encodingFlags =
+        mEncodingFlags & ~nsIWebBrowserPersist::ENCODE_FLAGS_NOSCRIPT_CONTENT;
+
+    rv = docData->mDocument->WriteContent(
+        docStream, flatMap, NS_ConvertUTF16toUTF8(mContentType), encodingFlags,
+        mWrapColumn, completion);
 
     SpinEventLoopUntil("nsWebBrowserPersist::SerializeAsMHTML"_ns,
                        [&]() { return completion->mFinished; });
@@ -2992,11 +3000,12 @@ nsresult nsWebBrowserPersist::SerializeAsMHTML() {
     rv = NS_ConsumeStream(docInputStream, UINT32_MAX, docContent);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    // Chrome strips <script> and <noscript> tags from MHTML to prevent execution issues
+    // Chrome strips <script> and <noscript> tags from MHTML to prevent
+    // execution issues
     nsCString strippedContent;
     const char* src = docContent.BeginReading();
     const char* end = docContent.EndReading();
-    
+
     while (src < end) {
       const char* tagStart = strchr(src, '<');
       if (!tagStart) {
@@ -3004,22 +3013,24 @@ nsresult nsWebBrowserPersist::SerializeAsMHTML() {
         strippedContent.Append(src, end - src);
         break;
       }
-      
+
       // Append everything before the tag
       strippedContent.Append(src, tagStart - src);
-      
+
       // Check if this is a script or noscript tag
-      bool isScript = (tagStart + 7 < end && 
-                      strncasecmp(tagStart, "<script", 7) == 0 &&
-                      (tagStart[7] == '>' || tagStart[7] == ' ' || tagStart[7] == '\t' || tagStart[7] == '\n'));
-      bool isNoScript = (tagStart + 9 < end &&
-                        strncasecmp(tagStart, "<noscript", 9) == 0 &&
-                        (tagStart[9] == '>' || tagStart[9] == ' ' || tagStart[9] == '\t' || tagStart[9] == '\n'));
-      
+      bool isScript =
+          (tagStart + 7 < end && strncasecmp(tagStart, "<script", 7) == 0 &&
+           (tagStart[7] == '>' || tagStart[7] == ' ' || tagStart[7] == '\t' ||
+            tagStart[7] == '\n'));
+      bool isNoScript =
+          (tagStart + 9 < end && strncasecmp(tagStart, "<noscript", 9) == 0 &&
+           (tagStart[9] == '>' || tagStart[9] == ' ' || tagStart[9] == '\t' ||
+            tagStart[9] == '\n'));
+
       if (isScript || isNoScript) {
         const char* searchTag = isScript ? "</script>" : "</noscript>";
         size_t searchLen = isScript ? 9 : 11;
-        
+
         // Find the closing tag
         const char* tagEnd = nullptr;
         for (const char* p = tagStart; p < end - searchLen; p++) {
@@ -3028,7 +3039,7 @@ nsresult nsWebBrowserPersist::SerializeAsMHTML() {
             break;
           }
         }
-        
+
         if (tagEnd) {
           // Skip the entire tag and its content
           src = tagEnd;

@@ -31,8 +31,7 @@ class MHTMLPersist {
  private:
   nsresult WriteBoundary(bool aFinal);
   nsresult WriteHeader(const nsACString& aContentType, nsIURI* aURI,
-                       const nsACString& aEncoding,
-                       const nsACString& aCharset);
+                       const nsACString& aEncoding, const nsACString& aCharset);
   nsresult WriteBase64Data(const uint8_t* aData, uint32_t aDataLen);
 
   nsCString GenerateBoundary();
@@ -47,4 +46,3 @@ class MHTMLPersist {
 }  // namespace mozilla
 
 #endif
-

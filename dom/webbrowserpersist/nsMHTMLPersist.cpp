@@ -105,15 +105,17 @@ nsresult MHTMLPersist::WriteHeader(const nsACString& aContentType, nsIURI* aURI,
                                    const nsACString& aCharset) {
   nsAutoCString header;
 
-  header.AppendPrintf("Content-Type: %s", PromiseFlatCString(aContentType).get());
+  header.AppendPrintf("Content-Type: %s",
+                      PromiseFlatCString(aContentType).get());
   if (!aCharset.IsEmpty()) {
-    header.AppendPrintf(";\r\n\tcharset=\"%s\"", PromiseFlatCString(aCharset).get());
+    header.AppendPrintf(";\r\n\tcharset=\"%s\"",
+                        PromiseFlatCString(aCharset).get());
   }
   header.AppendLiteral("\r\n");
 
   if (!aEncoding.IsEmpty()) {
     header.AppendPrintf("Content-Transfer-Encoding: %s\r\n",
-                       PromiseFlatCString(aEncoding).get());
+                        PromiseFlatCString(aEncoding).get());
   }
 
   if (aURI) {
@@ -143,8 +145,8 @@ nsresult MHTMLPersist::WriteBase64Data(const uint8_t* aData,
   const uint32_t kMaxLineLength = 76;
   uint32_t offset = 0;
   while (offset < base64.Length()) {
-    uint32_t lineLength =
-        std::min(kMaxLineLength, static_cast<uint32_t>(base64.Length() - offset));
+    uint32_t lineLength = std::min(
+        kMaxLineLength, static_cast<uint32_t>(base64.Length() - offset));
     uint32_t written;
     rv = mStream->Write(base64.get() + offset, lineLength, &written);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -180,8 +182,9 @@ nsresult MHTMLPersist::AddDocument(const nsACString& aContentType,
     rv = WriteHeader(aContentType, aDocumentURI, encoding, aCharset);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    rv = WriteBase64Data(reinterpret_cast<const uint8_t*>(aContent.BeginReading()),
-                        aContent.Length());
+    rv = WriteBase64Data(
+        reinterpret_cast<const uint8_t*>(aContent.BeginReading()),
+        aContent.Length());
   } else {
     encoding.AssignLiteral("quoted-printable");
     rv = WriteHeader(aContentType, aDocumentURI, encoding, aCharset);
@@ -213,10 +216,9 @@ nsresult MHTMLPersist::AddResource(nsIURI* aResourceURI,
 nsresult MHTMLPersist::FinishMHTMLArchive() {
   nsresult rv = WriteBoundary(true);
   NS_ENSURE_SUCCESS(rv, rv);
-  
+
   mStream = nullptr;
   return NS_OK;
 }
 
 }  // namespace mozilla
-

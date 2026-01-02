@@ -374,9 +374,9 @@ function internalSave(
     var useSaveDocument =
       aDocument &&
       ((saveMode & SAVEMODE_COMPLETE_DOM &&
-        (saveAsType == kSaveAsType_Complete || 
-         saveAsType == 1 || // HTML only
-         saveAsType == kSaveAsType_MHTML)) ||
+        (saveAsType == kSaveAsType_Complete ||
+          saveAsType == 1 || // HTML only
+          saveAsType == kSaveAsType_MHTML)) ||
         (saveMode & SAVEMODE_COMPLETE_TEXT && saveAsType >= kSaveAsType_Text));
     // If we're saving a document, and are saving either in complete mode or
     // as converted text, pass the document to the web browser persist component.

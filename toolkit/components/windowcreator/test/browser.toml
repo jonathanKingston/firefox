@@ -22,3 +22,11 @@ support-files = [
   "file_persist_simple.html",
   "file_persist_image.png",
 ]
+
+["browser_mhtml_read.js"]
+support-files = [
+  "file_persist_simple.html",
+  "file_persist_image.png",
+]
+
+["browser_mhtml_load.js"]

@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Test MHTML with CID References</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+    .test-section {
+      margin: 20px 0;
+      padding: 15px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+    }
+    .test-section h2 {
+      margin-top: 0;
+      color: #333;
+    }
+  </style>
+  <!-- This will be converted to CID reference in Chrome's MHTML -->
+  <link rel="stylesheet" href="data:text/css;base64,LnRlc3QtYm94IHsKICBiYWNrZ3JvdW5kOiAjZTBmN2ZhOwogIGJvcmRlci1sZWZ0OiA0cHggc29saWQgIzAwNzhjNzsKICBwYWRkaW5nOiAxMHB4OwogIG1hcmdpbjogMTBweCAwOwp9">
+</head>
+<body>
+  <h1>MHTML CID Support Test</h1>
+  
+  <div class="test-section">
+    <h2>What This Tests</h2>
+    <p>This HTML file tests whether Firefox can correctly handle Chrome-generated MHTML files that use Content-ID headers and <code>cid:</code> URI references instead of Content-Location headers.</p>
+  </div>
+
+  <div class="test-section">
+    <h2>Chrome's MHTML Format</h2>
+    <p>Chrome/Blink uses Content-ID headers for subresources:</p>
+    <pre>Content-Type: text/css
+Content-ID: &lt;css-b8ff2cbc-0368-45e5-a43d-c712d631fc8e@mhtml.blink&gt;
+Content-Transfer-Encoding: quoted-printable</pre>
+    
+    <p>And references them using <code>cid:</code> URIs:</p>
+    <pre>&lt;link rel="stylesheet" href="cid:css-b8ff2cbc-0368-45e5-a43d-c712d631fc8e@mhtml.blink"&gt;</pre>
+  </div>
+
+  <div class="test-section">
+    <h2>Firefox's MHTML Format</h2>
+    <p>Firefox uses Content-Location headers:</p>
+    <pre>Content-Type: text/css
+Content-Location: https://example.com/style.css</pre>
+    
+    <p>And references them using normal URLs:</p>
+    <pre>&lt;link rel="stylesheet" href="https://example.com/style.css"&gt;</pre>
+  </div>
+
+  <div class="test-section test-box">
+    <h2>✓ CID Support Implemented</h2>
+    <p>Firefox now supports <strong>both</strong> formats when reading MHTML files:</p>
+    <ul>
+      <li>Content-Location → URL references (Firefox export)</li>
+      <li>Content-ID → cid: references (Chrome export)</li>
+    </ul>
+    <p>This ensures maximum compatibility across browsers!</p>
+  </div>
+
+  <div class="test-section">
+    <h2>Manual Test Instructions</h2>
+    <ol>
+      <li>Save this page as MHTML in <strong>Chrome</strong> (Save As → Web Page, Single File)</li>
+      <li>Open the saved .mhtml file in <strong>Firefox</strong></li>
+      <li>Verify that:
+        <ul>
+          <li>All CSS styles are applied correctly</li>
+          <li>The blue test box above has proper styling</li>
+          <li>No network requests are made (check DevTools)</li>
+        </ul>
+      </li>
+    </ol>
+  </div>
+
+  <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iIzRjYWY1MCIvPgogIDx0ZXh0IHg9IjUwIiB5PSI1NSIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjE2IiBmaWxsPSJ3aGl0ZSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+VEVTVDwvdGV4dD4KPC9zdmc+" alt="Test Image">
+  
+  <p><em>If you can see a green square with "TEST" text above, embedded resources are working!</em></p>
+</body>
+</html>
+

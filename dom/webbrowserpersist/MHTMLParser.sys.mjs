@@ -80,8 +80,14 @@ export class MHTMLParser {
 
     let contentType = headers["content-type"] || "text/plain";
     let contentLocation = headers["content-location"] || null;
+    let contentID = headers["content-id"] || null;
     let encoding = headers["content-transfer-encoding"] || null;
     let charset = this._extractCharset(contentType);
+
+    // Clean up Content-ID (strip angle brackets per RFC 822)
+    if (contentID) {
+      contentID = contentID.replace(/^<|>$/g, "");
+    }
 
     // Clean up body (remove trailing boundary markers and whitespace)
     body = body.replace(/\r?\n--[^\r\n]*$/, "").trim();
@@ -89,6 +95,7 @@ export class MHTMLParser {
     return {
       contentType: contentType.split(";")[0].trim(),
       contentLocation,
+      contentID,
       encoding,
       charset,
       headers,
@@ -155,6 +162,18 @@ export class MHTMLParser {
    */
   getPartByLocation(location) {
     return this.parts.find(p => p.contentLocation === location);
+  }
+
+  /**
+   * Get a specific part by Content-ID
+   *
+   * @param {string} cid - Content-ID (with or without angle brackets)
+   * @returns {object | null} Part object or null if not found
+   */
+  getPartByCID(cid) {
+    // Strip angle brackets if present
+    let cleanCID = cid.replace(/^<|>$/g, "");
+    return this.parts.find(p => p.contentID === cleanCID);
   }
 
   /**

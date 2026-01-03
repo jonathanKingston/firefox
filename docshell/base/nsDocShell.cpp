@@ -10738,17 +10738,10 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
     return NS_OK;
   }
 
-  // Check if this is an MHTML file (before normal loading)
-  nsCOMPtr<nsIURI> loadURI = aLoadState->URI();
-  if (loadURI && loadURI->SchemeIs("file")) {
-    nsAutoCString path;
-    nsresult rv = loadURI->GetFilePath(path);
-    if (NS_SUCCEEDED(rv)) {
-      if (StringEndsWith(path, ".mhtml"_ns) || StringEndsWith(path, ".mht"_ns)) {
-        return LoadMHTMLFile(loadURI, aLoadState, aRequest);
-      }
-    }
-  }
+  // MHTML files are now handled by:
+  // 1. MHTMLContentSniffer.sys.mjs - Detects MHTML and sets MIME type
+  // 2. MHTMLConverter.sys.mjs - Converts multipart/related to HTML
+  // No intercept needed - everything happens via standard Firefox mechanisms
 
   nsCOMPtr<nsIURILoader> uriLoader = components::URILoader::Service();
   if (NS_WARN_IF(!uriLoader)) {
@@ -11217,10 +11210,15 @@ nsresult nsDocShell::LoadMHTMLFile(nsIURI* aURI,
                                    nsIRequest** aRequest) {
   MOZ_ASSERT(aURI);
   
+  printf("MHTML: LoadMHTMLFile called for URI: %s\n", aURI->GetSpecOrDefault().get());
+  fflush(stdout);
+
   // Get file from URI
   nsCOMPtr<nsIFile> file;
   nsresult rv = NS_GetFileFromURLSpec(aURI->GetSpecOrDefault(), getter_AddRefs(file));
   if (NS_FAILED(rv)) {
+    printf("MHTML: NS_GetFileFromURLSpec failed with rv=0x%x\n", static_cast<uint32_t>(rv));
+    fflush(stdout);
     return rv;
   }
 
@@ -11228,11 +11226,19 @@ nsresult nsDocShell::LoadMHTMLFile(nsIURI* aURI,
   nsCOMPtr<nsIInputStream> inputStream;
   rv = NS_NewLocalFileInputStream(getter_AddRefs(inputStream), file);
   if (NS_FAILED(rv)) {
-    // Common failure: macOS sandbox blocking ~/Documents, ~/Desktop, etc.
-    // User needs to grant Firefox permission in System Settings
-    NS_WARNING("Failed to open MHTML file - check file permissions and macOS sandbox settings");
+    printf("MHTML: NS_NewLocalFileInputStream failed with rv=0x%x for load type %u\n", 
+           static_cast<uint32_t>(rv), aLoadState->LoadType());
+    fflush(stdout);
+    
+    // All file:// loads from URL bar fail on macOS dev builds due to sandbox
+    // The intercept happens before normal file:// permission handling
+    // Workaround: Don't intercept, let file picker or normal handler take over
+    NS_WARNING("Failed to open MHTML file - early intercept bypasses file:// permission handling");
     return rv;
   }
+  
+  printf("MHTML: Successfully opened file stream\n");
+  fflush(stdout);
 
   uint64_t fileSize;
   rv = inputStream->Available(&fileSize);
@@ -11248,9 +11254,7 @@ nsresult nsDocShell::LoadMHTMLFile(nsIURI* aURI,
     return rv;
   }
 
-  // Parse MHTML content
-  // TODO: Integrate full MHTMLArchive.sys.mjs parser for resource extraction
-  // For now, use simple HTML extraction which works well for main content
+  // Parse MHTML content - simple extraction for now
   nsCString htmlContent;
   
   // Simple MHTML parsing: extract HTML from first text/html part
@@ -11338,26 +11342,7 @@ nsresult nsDocShell::LoadMHTMLFile(nsIURI* aURI,
   } else {
     htmlContent = mhtmlContent;
   }
-
-  // JS module integration commented out - API needs research
-  // Will implement in follow-up patch
-  /*
-  JS::Rooted<JSObject*> moduleNamespace(cx);
-  rv = LoadESModule(cx, u"resource://gre/modules/MHTMLArchive.sys.mjs"_ns, &moduleNamespace);
-  if (NS_FAILED(rv) || !moduleNamespace) {
-    // Fallback to simple parsing above
-  }
-  */
   
-  mMHTMLArchive = nullptr;  // TODO: Store archive when JS integration works
-  
-  // Skip old JS integration code (TODO: implement properly in follow-up)
-  goto load_html;
-  
-  // Old JS integration code (disabled - needs proper ES module loading API)
-  // Will be implemented in follow-up patch with correct module loading
-  
-load_html:
   // Load extracted HTML content
   nsCOMPtr<nsIInputStream> htmlStream;
   rv = NS_NewCStringInputStream(getter_AddRefs(htmlStream), htmlContent);
@@ -11365,13 +11350,8 @@ load_html:
     return rv;
   }
 
-  // SECURITY NOTE: We use the file:// URI's natural principal, which already provides:
-  // - Unique origin per file (no cross-file same-origin access)
-  // - Partitioned storage (localStorage isolated by file path)  
-  // - No cross-origin network access by default
-  // This matches Firefox's existing file:// security model.
-  // Unlike null principal, this allows the page to load its own resources.
-
+  // SECURITY NOTE: Use system principal for channel creation (not for load state!)
+  // This allows reading the file, but the document still gets file:// principal
   nsCOMPtr<nsIChannel> channel;
   rv = NS_NewInputStreamChannel(
       getter_AddRefs(channel), aURI, htmlStream.forget(),
@@ -11383,12 +11363,11 @@ load_html:
   }
 
   // Provide the channel to the caller if requested
-  // This is important for correct error page/session history interaction
   if (aRequest) {
     NS_ADDREF(*aRequest = channel);
   }
 
-  // Use OpenInitializedChannel instead of URI loader for proper docshell integration
+  // Use OpenInitializedChannel for proper docshell integration
   nsCOMPtr<nsIURILoader> uriLoader = components::URILoader::Service();
   if (!uriLoader) {
     return NS_ERROR_UNEXPECTED;

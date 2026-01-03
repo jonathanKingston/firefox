@@ -249,3 +249,63 @@ Content-Location: http://example.com/test.html
   Assert.ok(parts[0].body.includes("Different boundary"), "Content should be extracted");
 });
 
+/**
+ * Test Content-ID header (Chrome/Blink format)
+ */
+add_task(async function test_content_id() {
+  let mhtmlContent = `MIME-Version: 1.0
+Content-Type: multipart/related; boundary="----MultipartBoundary"
+
+------MultipartBoundary
+Content-Type: text/html
+Content-Location: http://example.com/test.html
+
+<!DOCTYPE html>
+<html><body><link rel="stylesheet" href="cid:css-123@mhtml.blink"></body></html>
+------MultipartBoundary
+Content-Type: text/css
+Content-ID: <css-123@mhtml.blink>
+Content-Transfer-Encoding: quoted-printable
+
+body { color: red; }
+------MultipartBoundary--`;
+
+  let parser = new MHTMLParser(mhtmlContent);
+  let parts = parser.parse();
+
+  Assert.equal(parts.length, 2, "Should have 2 parts");
+  Assert.equal(parts[0].contentType, "text/html", "First should be HTML");
+  Assert.equal(parts[1].contentType, "text/css", "Second should be CSS");
+  
+  // Check that Content-ID is parsed (note: strip angle brackets)
+  Assert.ok(parts[1].contentID, "Should have contentID field");
+  Assert.equal(parts[1].contentID, "css-123@mhtml.blink", "Content-ID should match without angle brackets");
+  
+  let decodedCSS = parser.decodeBody(parts[1]);
+  Assert.ok(decodedCSS.includes("color: red"), "CSS should decode correctly");
+});
+
+/**
+ * Test Content-ID with both Content-Location (hybrid)
+ */
+add_task(async function test_content_id_and_location() {
+  let mhtmlContent = `MIME-Version: 1.0
+Content-Type: multipart/related; boundary="----MultipartBoundary"
+
+------MultipartBoundary
+Content-Type: text/css
+Content-Location: http://example.com/style.css
+Content-ID: <css-456@mhtml.blink>
+
+body { background: blue; }
+------MultipartBoundary--`;
+
+  let parser = new MHTMLParser(mhtmlContent);
+  let parts = parser.parse();
+
+  Assert.equal(parts.length, 1, "Should have 1 part");
+  Assert.equal(parts[0].contentLocation, "http://example.com/style.css", "Should have Content-Location");
+  Assert.equal(parts[0].contentID, "css-456@mhtml.blink", "Should have Content-ID");
+  Assert.ok(parts[0].body.includes("background: blue"), "Should extract body");
+});
+

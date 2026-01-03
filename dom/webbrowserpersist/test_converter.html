@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test MHTML Converter Loading</title>
+</head>
+<body>
+    <h1>MHTML Converter Test</h1>
+    <pre id="output"></pre>
+    <script>
+        const output = document.getElementById('output');
+        
+        try {
+            output.textContent += "Testing converter registration...\n";
+            
+            // Try to get the stream converter service
+            const streamConvService = Components.classes["@mozilla.org/streamConverterService;1"]
+                .getService(Components.interfaces.nsIStreamConverterService);
+            output.textContent += "✓ Stream converter service available\n";
+            
+            // Check if our converter is registered
+            try {
+                const converter = streamConvService.asyncConvertData(
+                    "multipart/related",
+                    "*/*",
+                    null,
+                    null
+                );
+                output.textContent += "✓ MHTML converter found and instantiated!\n";
+                output.textContent += `  Converter: ${converter}\n`;
+            } catch (e) {
+                output.textContent += "✗ MHTML converter NOT found:\n";
+                output.textContent += `  Error: ${e}\n`;
+            }
+            
+        } catch (e) {
+            output.textContent += "✗ Error: " + e + "\n";
+            output.textContent += "  Stack: " + e.stack + "\n";
+        }
+    </script>
+</body>
+</html>
+

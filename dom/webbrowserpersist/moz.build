@@ -42,7 +42,13 @@ EXPORTS.mozilla += [
 
 EXTRA_JS_MODULES += [
     "MHTMLArchive.sys.mjs",
+    "MHTMLConverter.sys.mjs",
     "MHTMLParser.sys.mjs",
+    "MHTMLStartup.sys.mjs",
+]
+
+XPCOM_MANIFESTS += [
+    "components.conf",
 ]
 
 XPCSHELL_TESTS_MANIFESTS += ["test/unit/xpcshell.toml"]

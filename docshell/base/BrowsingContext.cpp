@@ -32,6 +32,8 @@
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/DocumentPictureInPicture.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/PolicyContainer.h"
+#include "nsContentSecurityUtils.h"
 #include "mozilla/dom/Geolocation.h"
 #include "mozilla/dom/HTMLEmbedElement.h"
 #include "mozilla/dom/HTMLIFrameElement.h"
@@ -79,6 +81,7 @@
 
 #include "nsDocShell.h"
 #include "nsDocShellLoadState.h"
+#include "nsHttp.h"
 #include "nsFocusManager.h"
 #include "nsGlobalWindowInner.h"
 #include "nsGlobalWindowOuter.h"
@@ -561,6 +564,38 @@ already_AddRefed<BrowsingContext> BrowsingContext::CreateIndependent(
   return bc.forget();
 }
 
+void BrowsingContext::SetUpgradeInsecureOrigin(const nsACString& aHost,
+                                               int32_t aPort) {
+  // Only set if not already set (first ancestor wins via inheritance)
+  if (mUpgradeInsecureOriginHost.IsEmpty()) {
+    mUpgradeInsecureOriginHost = aHost;
+    mUpgradeInsecureOriginPort = aPort;
+  }
+}
+
+bool BrowsingContext::ShouldUpgradeInsecureNavigation(const nsACString& aHost,
+                                                      int32_t aPort) const {
+  // Walk up the parent chain checking for matching UIR origin.
+  // Per spec Section 3.3, nested browsing contexts inherit from ancestors.
+  for (const BrowsingContext* bc = this; bc; bc = bc->GetParent()) {
+    if (!bc->mUpgradeInsecureOriginHost.IsEmpty() &&
+        bc->mUpgradeInsecureOriginHost.Equals(aHost) &&
+        bc->mUpgradeInsecureOriginPort == aPort) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool BrowsingContext::HasUpgradeInsecureOrigin() const {
+  for (const BrowsingContext* bc = this; bc; bc = bc->GetParent()) {
+    if (!bc->mUpgradeInsecureOriginHost.IsEmpty()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void BrowsingContext::EnsureAttached() {
   if (!mEverAttached) {
     Register(this);
@@ -621,6 +656,10 @@ mozilla::ipc::IPCResult BrowsingContext::CreateFromIPC(
   context->SetRemoteSubframes(aInit.mUseRemoteSubframes);
   context->mRequestContextId = aInit.mRequestContextId;
   // NOTE: Private browsing ID is set by `SetOriginAttributes`.
+
+  // Restore the upgrade insecure origin from the initializer (inherited).
+  context->mUpgradeInsecureOriginHost = aInit.mUpgradeInsecureOriginHost;
+  context->mUpgradeInsecureOriginPort = aInit.mUpgradeInsecureOriginPort;
 
   if (const char* failure =
           context->BrowsingContextCoherencyChecks(aOriginProcess)) {
@@ -2430,6 +2469,44 @@ BrowsingContext::CheckURLAndCreateLoadState(nsIURI* aURI,
   return loadState.forget();
 }
 
+// For top-level HTTP navigations, check if upgrade-insecure-requests should
+// apply based on CSP and (host, port) matching.
+//
+// Per spec Section 3.2.1, check if the navigation URL's (host, port) matches
+// the inherited UIR origin. The origin is set when a document with
+// upgrade-insecure-requests CSP loads, and is inherited down the BC tree.
+// https://w3c.github.io/webappsec-upgrade-insecure-requests/#upgrade-insecure-navigations-set
+static void MaybeHandleUpgradeInsecureRequestsForNavigation(
+    BrowsingContext* aBrowsingContext, nsIURI* aURI, Document* aSourceDocument,
+    nsDocShellLoadState* aLoadState) {
+  if (!aBrowsingContext->IsTopContent() || !aURI || !aURI->SchemeIs("http")) {
+    return;
+  }
+
+  nsAutoCString navHost;
+  int32_t navPort = -1;
+  if (NS_FAILED(aURI->GetHost(navHost)) || NS_FAILED(aURI->GetPort(&navPort))) {
+    return;
+  }
+
+  // Check if the navigation URL matches the inherited UIR origin.
+  // Check both the target BC and the source BC (which inherits from
+  // ancestors including the target when source is an iframe).
+  bool shouldUpgradeFromTarget =
+      aBrowsingContext->ShouldUpgradeInsecureNavigation(navHost, navPort);
+  BrowsingContext* sourceBC =
+      aSourceDocument ? aSourceDocument->GetBrowsingContext() : nullptr;
+  bool shouldUpgradeFromSource =
+      sourceBC && sourceBC->ShouldUpgradeInsecureNavigation(navHost, navPort);
+
+  if (shouldUpgradeFromTarget || shouldUpgradeFromSource) {
+    aLoadState->SetUpgradeInsecureNavigationRequested(true);
+  } else if (sourceBC && sourceBC->HasUpgradeInsecureOrigin()) {
+    // Source has UIR but the navigation URL doesn't match - skip upgrade.
+    aLoadState->SetShouldSkipUpgradeInsecureRequests(true);
+  }
+}
+
 // https://html.spec.whatwg.org/#navigate
 // In its current state, this method is not closely following the spec.
 // https://bugzil.la/1974717 tracks the work to align this method with the spec.
@@ -2492,6 +2569,9 @@ void BrowsingContext::Navigate(
   loadState->SetFirstParty(true);
   loadState->SetNavigationAPIState(aNavigationAPIState);
   loadState->SetNavigationAPIMethodTracker(aNavigationAPIMethodTracker);
+
+  MaybeHandleUpgradeInsecureRequestsForNavigation(this, aURI, aSourceDocument,
+                                                  loadState);
 
   rv = LoadURI(loadState);
   if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -2998,6 +3078,8 @@ BrowsingContext::IPCInitializer BrowsingContext::GetIPCInitializer() {
     init.mSessionHistoryCount = mChildSessionHistory->Count();
   }
   init.mRequestContextId = mRequestContextId;
+  init.mUpgradeInsecureOriginHost = mUpgradeInsecureOriginHost;
+  init.mUpgradeInsecureOriginPort = mUpgradeInsecureOriginPort;
   init.mFields = mFields.RawValues();
   return init;
 }
@@ -4624,6 +4706,8 @@ void ParamTraits<BrowsingContext::IPCInitializer>::Write(
   WriteParam(aWriter, aInit.mRequestContextId);
   WriteParam(aWriter, aInit.mSessionHistoryIndex);
   WriteParam(aWriter, aInit.mSessionHistoryCount);
+  WriteParam(aWriter, aInit.mUpgradeInsecureOriginHost);
+  WriteParam(aWriter, aInit.mUpgradeInsecureOriginPort);
   WriteParam(aWriter, aInit.mFields);
 }
 
@@ -4641,6 +4725,8 @@ bool ParamTraits<BrowsingContext::IPCInitializer>::Read(
          ReadParam(aReader, &aInit->mRequestContextId) &&
          ReadParam(aReader, &aInit->mSessionHistoryIndex) &&
          ReadParam(aReader, &aInit->mSessionHistoryCount) &&
+         ReadParam(aReader, &aInit->mUpgradeInsecureOriginHost) &&
+         ReadParam(aReader, &aInit->mUpgradeInsecureOriginPort) &&
          ReadParam(aReader, &aInit->mFields);
 }
 

@@ -158,6 +158,16 @@ class nsDocShellLoadState final {
 
   void SetIsExemptFromHTTPSFirstMode(bool aIsExemptFromHTTPSFirstMode);
 
+  bool ShouldSkipUpgradeInsecureRequests() const;
+
+  void SetShouldSkipUpgradeInsecureRequests(
+      bool aShouldSkipUpgradeInsecureRequests);
+
+  bool UpgradeInsecureNavigationRequested() const;
+
+  void SetUpgradeInsecureNavigationRequested(
+      bool aUpgradeInsecureNavigationRequested);
+
   RefPtr<HTTPSFirstDowngradeData> GetHttpsFirstDowngradeData() const;
 
   void SetHttpsFirstDowngradeData(
@@ -589,6 +599,21 @@ class nsDocShellLoadState final {
   // If this attribute is true, then the top-level navigaion
   // will be exempt from HTTPS-Only-Mode upgrades.
   bool mIsExemptFromHTTPSFirstMode;
+
+  // If this attribute is true, the navigation should not be upgraded by
+  // upgrade-insecure-requests CSP directive, even if the PolicyContainer
+  // contains such a directive. This is set when the source document has UIR
+  // but the navigation URL's (host, port) is not in the upgrade insecure
+  // navigations set, meaning this specific URL should not be upgraded.
+  // https://w3c.github.io/webappsec-upgrade-insecure-requests/#upgrade-insecure-navigations-set
+  bool mShouldSkipUpgradeInsecureRequests;
+
+  // If this attribute is true, BrowsingContext::Navigate determined that the
+  // navigation should be upgraded per upgrade-insecure-requests policy. This
+  // flag signals to nsDocShell that upgrade was requested; nsDocShell still
+  // performs same-origin and port compatibility checks before actually
+  // upgrading.
+  bool mUpgradeInsecureNavigationRequested;
 
   // If set, this load is a HTTPS-First downgrade, and the downgrade data will
   // be submitted to telemetry later if the load succeeds.

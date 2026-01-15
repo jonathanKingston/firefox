@@ -29,6 +29,7 @@
 #include "nsCycleCollectionParticipant.h"
 #include "nsIDocShell.h"
 #include "nsTArray.h"
+#include "nsTHashSet.h"
 #include "nsWrapperCache.h"
 #include "nsILoadInfo.h"
 #include "nsILoadContext.h"
@@ -507,6 +508,18 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
 
   void DisplayLoadError(const nsAString& aURI);
 
+  // Upgrade Insecure Requests origin - per spec Section 3:
+  // https://w3c.github.io/webappsec-upgrade-insecure-requests/#upgrade-insecure-navigations-set
+  // Set the origin that established upgrade-insecure-requests. Only sets if
+  // not already set (first ancestor wins). Inherited by child BCs.
+  void SetUpgradeInsecureOrigin(const nsACString& aHost, int32_t aPort);
+  // Check if a navigation to (host, port) should be upgraded based on the
+  // inherited UIR origin. Walks up the parent chain per spec Section 3.3.
+  bool ShouldUpgradeInsecureNavigation(const nsACString& aHost,
+                                       int32_t aPort) const;
+  // Check if an upgrade insecure origin has been set (by this BC or ancestor).
+  bool HasUpgradeInsecureOrigin() const;
+
   // Check that this browsing context is targetable for navigations (i.e. that
   // it is neither closed, cached, nor discarded).
   bool IsTargetable() const;
@@ -925,6 +938,10 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
     int32_t mSessionHistoryCount = 0;
     OriginAttributes mOriginAttributes;
     uint64_t mRequestContextId = 0;
+
+    // Upgrade insecure origin - inherited from ancestor with UIR CSP
+    nsCString mUpgradeInsecureOriginHost;
+    int32_t mUpgradeInsecureOriginPort = -1;
 
     FieldValues mFields;
   };
@@ -1687,6 +1704,14 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   mozilla::TimeStamp mNavigationRateLimitSpanStart;
 
   mozilla::LinkedList<dom::Location> mLocations;
+
+  // Upgrade insecure origin per spec Section 3:
+  // https://w3c.github.io/webappsec-upgrade-insecure-requests/#upgrade-insecure-navigations-set
+  // The (host, port) of the first document in this BC tree that had
+  // upgrade-insecure-requests CSP. Navigations to this origin should be
+  // upgraded. Inherited from parent BC at creation time and via IPC.
+  nsCString mUpgradeInsecureOriginHost;
+  int32_t mUpgradeInsecureOriginPort = -1;
 };
 
 /**

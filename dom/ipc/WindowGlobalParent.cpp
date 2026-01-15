@@ -147,6 +147,22 @@ already_AddRefed<WindowGlobalParent> WindowGlobalParent::CreateDisconnected(
   return wgp.forget();
 }
 
+void WindowGlobalParent::MaybeSetUpgradeInsecureOrigin() {
+  if (!mUpgradeInsecureRequests) {
+    return;
+  }
+  if (CanonicalBrowsingContext* bc = BrowsingContext()) {
+    if (nsIURI* docURI = GetDocumentURI()) {
+      nsAutoCString host;
+      int32_t port = -1;
+      if (NS_SUCCEEDED(docURI->GetHost(host)) &&
+          NS_SUCCEEDED(docURI->GetPort(&port))) {
+        bc->SetUpgradeInsecureOrigin(host, port);
+      }
+    }
+  }
+}
+
 void WindowGlobalParent::Init() {
   MOZ_ASSERT(Manager(), "Should have a manager!");
 
@@ -187,6 +203,9 @@ void WindowGlobalParent::Init() {
     MOZ_ALWAYS_SUCCEEDS(
         BrowsingContext()->SetCurrentInnerWindowId(InnerWindowId()));
   }
+
+  // Per spec Section 3.1, when UIR is enforced, set the UIR origin on the BC.
+  MaybeSetUpgradeInsecureOrigin();
 
   if (BrowsingContext()->IsTopContent()) {
     // For top level sandboxed documents we need to create a new principal
@@ -532,6 +551,10 @@ IPCResult WindowGlobalParent::RecvUpdateDocumentCspSettings(
     bool aBlockAllMixedContent, bool aUpgradeInsecureRequests) {
   mBlockAllMixedContent = aBlockAllMixedContent;
   mUpgradeInsecureRequests = aUpgradeInsecureRequests;
+
+  // Per spec Section 3.1, when UIR is enforced, set the UIR origin on the BC.
+  MaybeSetUpgradeInsecureOrigin();
+
   return IPC_OK();
 }
 

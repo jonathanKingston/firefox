@@ -362,6 +362,8 @@ class WindowGlobalParent final : public WindowContext,
 
   ~WindowGlobalParent();
 
+  void MaybeSetUpgradeInsecureOrigin();
+
   bool ShouldTrackSiteOriginTelemetry();
   enum class PageUseCounterResultBits : uint8_t {
     WAITING,

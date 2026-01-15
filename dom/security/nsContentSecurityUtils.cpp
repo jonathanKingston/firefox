@@ -119,6 +119,40 @@ bool nsContentSecurityUtils::IsConsideredSameOriginForUIR(
 }
 
 /* static */
+bool nsContentSecurityUtils::IsUpgradeInsecureRequestsPortCompatible(
+    int32_t aHttpPort, int32_t aHttpsPort) {
+  // Normalize ports: -1 means default (80 for HTTP, 443 for HTTPS)
+  int32_t effectiveHttpPort = (aHttpPort == -1) ? 80 : aHttpPort;
+  int32_t effectiveHttpsPort = (aHttpsPort == -1) ? 443 : aHttpsPort;
+
+  // Upgrade is valid if:
+  // 1. Ports match exactly (server speaks HTTPS on the same port)
+  // 2. Navigating from default HTTP (80) to default HTTPS (443)
+  return effectiveHttpPort == effectiveHttpsPort ||
+         (effectiveHttpPort == 80 && effectiveHttpsPort == 443);
+}
+
+/* static */
+bool nsContentSecurityUtils::IsUpgradeInsecureRequestsPortCompatible(
+    nsIURI* aHttpURI, nsIPrincipal* aHttpsPrincipal) {
+  int32_t httpPort = -1;
+  if (aHttpURI) {
+    aHttpURI->GetPort(&httpPort);
+  }
+
+  int32_t httpsPort = -1;
+  if (aHttpsPrincipal) {
+    nsCOMPtr<nsIURI> httpsURI;
+    aHttpsPrincipal->GetURI(getter_AddRefs(httpsURI));
+    if (httpsURI) {
+      httpsURI->GetPort(&httpsPort);
+    }
+  }
+
+  return IsUpgradeInsecureRequestsPortCompatible(httpPort, httpsPort);
+}
+
+/* static */
 bool nsContentSecurityUtils::IsTrustedScheme(nsIURI* aURI) {
   return aURI->SchemeIs("resource") || aURI->SchemeIs("chrome") ||
          aURI->SchemeIs("moz-src");

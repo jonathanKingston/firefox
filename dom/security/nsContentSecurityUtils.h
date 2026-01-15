@@ -38,6 +38,20 @@ class nsContentSecurityUtils {
   static bool IsConsideredSameOriginForUIR(nsIPrincipal* aTriggeringPrincipal,
                                            nsIPrincipal* aResultPrincipal);
 
+  // Check if an HTTP navigation port is compatible with an HTTPS document port
+  // for upgrade-insecure-requests. UIR changes http://host:port to
+  // https://host:port (same port), so the upgrade only works if the server
+  // speaks HTTPS on that port.
+  // @param aHttpPort The port of the HTTP navigation (-1 means default 80)
+  // @param aHttpsPort The port of the HTTPS document (-1 means default 443)
+  // @returns true if ports are compatible for upgrade
+  static bool IsUpgradeInsecureRequestsPortCompatible(int32_t aHttpPort,
+                                                      int32_t aHttpsPort);
+
+  // Overload that extracts ports from URI and principal directly
+  static bool IsUpgradeInsecureRequestsPortCompatible(
+      nsIURI* aHttpURI, nsIPrincipal* aHttpsPrincipal);
+
   // Check whether the scheme is trusted (for privileged code execution).
   // @returns true, iff the scheme is chrome:, resource: or moz-src:
   static bool IsTrustedScheme(nsIURI* aURI);

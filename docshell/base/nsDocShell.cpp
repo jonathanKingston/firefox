@@ -10565,8 +10565,10 @@ nsIPrincipal* nsDocShell::GetInheritedPrincipal(
   }
 
   nsCOMPtr<nsIPolicyContainer> policyContainer = aLoadState->PolicyContainer();
-  if (nsCOMPtr<nsIContentSecurityPolicy> csp =
-          PolicyContainer::GetCSP(policyContainer)) {
+  bool upgradeSet = false;
+  nsCOMPtr<nsIContentSecurityPolicy> csp =
+      PolicyContainer::GetCSP(policyContainer);
+  if (csp) {
     // Navigational requests that are same origin need to be upgraded in case
     // upgrade-insecure-requests is present. Please note that for document
     // navigations that bit is re-computed in case we encounter a server
@@ -10574,16 +10576,73 @@ nsIPrincipal* nsDocShell::GetInheritedPrincipal(
     bool upgradeInsecureRequests = false;
     csp->GetUpgradeInsecureRequests(&upgradeInsecureRequests);
     if (upgradeInsecureRequests) {
-      // only upgrade if the navigation is same origin
       nsCOMPtr<nsIPrincipal> resultPrincipal;
       aRv = nsContentUtils::GetSecurityManager()->GetChannelResultPrincipal(
           channel, getter_AddRefs(resultPrincipal));
       NS_ENSURE_SUCCESS(aRv, false);
-      if (nsContentSecurityUtils::IsConsideredSameOriginForUIR(
-              aLoadState->TriggeringPrincipal(), resultPrincipal)) {
+
+      // For top-level navigations where BrowsingContext::Navigate has already
+      // handled port checking (indicated by PrincipalToInherit being set),
+      // create a principal from the navigation URI for the same-origin check.
+      nsCOMPtr<nsIPrincipal> principalToCheck =
+          aLoadState->TriggeringPrincipal();
+      if (aLoadState->PrincipalToInherit() &&
+          aLoadInfo->GetExternalContentPolicyType() ==
+              ExtContentPolicy::TYPE_DOCUMENT &&
+          aBrowsingContext && aBrowsingContext->IsTopContent() &&
+          aLoadState->URI()) {
+        mozilla::OriginAttributes attrs =
+            BasePrincipal::Cast(aLoadState->PrincipalToInherit())
+                ->OriginAttributesRef();
+        nsCOMPtr<nsIPrincipal> navPrincipal =
+            BasePrincipal::CreateContentPrincipal(aLoadState->URI(), attrs);
+        if (navPrincipal) {
+          principalToCheck = navPrincipal;
+        }
+      }
+
+      bool isSameOrigin = nsContentSecurityUtils::IsConsideredSameOriginForUIR(
+          principalToCheck, resultPrincipal);
+
+      // Check if navigation port matches the HTTPS port.
+      // upgrade-insecure-requests changes http://host:port to https://host:port
+      // (same port), so the upgrade only works if the server speaks HTTPS on
+      // that port.
+      //
+      // For sandboxed iframe navigations (where TriggeringPrincipal is a null
+      // principal), BrowsingContext::Navigate has already handled port checking
+      // and set up the PolicyContainer correctly, so trust it.
+      bool portsCompatible = true;
+      nsCOMPtr<nsIPrincipal> triggeringPrincipal =
+          aLoadState->TriggeringPrincipal();
+      bool isNullPrincipal =
+          triggeringPrincipal && triggeringPrincipal->GetIsNullPrincipal();
+      if (isSameOrigin && aLoadState->URI() &&
+          aLoadState->URI()->SchemeIs("http") &&
+          aLoadInfo->GetExternalContentPolicyType() ==
+              ExtContentPolicy::TYPE_DOCUMENT &&
+          !isNullPrincipal) {
+        portsCompatible =
+            nsContentSecurityUtils::IsUpgradeInsecureRequestsPortCompatible(
+                aLoadState->URI(), triggeringPrincipal);
+      }
+
+      if (isSameOrigin && portsCompatible) {
         aLoadInfo->SetUpgradeInsecureRequests(true);
+        upgradeSet = true;
       }
     }
+  }
+
+  // If PolicyContainer has no CSP but PrincipalToInherit is set for a top-level
+  // HTTP navigation, BrowsingContext::Navigate cleared the PolicyContainer to
+  // prevent upgrade due to port mismatch. Ensure upgrade flag is not set.
+  if (!upgradeSet && aLoadState->PrincipalToInherit() &&
+      aLoadInfo->GetExternalContentPolicyType() ==
+          ExtContentPolicy::TYPE_DOCUMENT &&
+      aBrowsingContext && aBrowsingContext->IsTopContent() &&
+      aLoadState->URI() && aLoadState->URI()->SchemeIs("http")) {
+    aLoadInfo->SetUpgradeInsecureRequests(false);
   }
 
   if (policyContainer) {

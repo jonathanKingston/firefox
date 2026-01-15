@@ -32,6 +32,9 @@
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/DocumentPictureInPicture.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/PolicyContainer.h"
+#include "mozilla/BasePrincipal.h"
+#include "nsContentSecurityUtils.h"
 #include "mozilla/dom/Geolocation.h"
 #include "mozilla/dom/HTMLEmbedElement.h"
 #include "mozilla/dom/HTMLIFrameElement.h"
@@ -2429,6 +2432,65 @@ BrowsingContext::CheckURLAndCreateLoadState(nsIURI* aURI,
   return loadState.forget();
 }
 
+// For top-level HTTP navigations, check if upgrade-insecure-requests should
+// apply based on port compatibility. UIR changes http://host:port to
+// https://host:port (same port), so upgrades only work if the server speaks
+// HTTPS on that port.
+static void MaybeHandleUpgradeInsecureRequestsForNavigation(
+    BrowsingContext* aBrowsingContext, nsIURI* aURI, Document* aSourceDocument,
+    nsDocShellLoadState* aLoadState) {
+  if (!aBrowsingContext->IsTopContent() || !aURI || !aURI->SchemeIs("http")) {
+    return;
+  }
+
+  // First, check if the TARGET document has upgrade-insecure-requests
+  Document* targetDoc = aBrowsingContext->GetDocument();
+  if (targetDoc) {
+    nsCOMPtr<nsIPolicyContainer> targetPolicyContainer =
+        targetDoc->GetPolicyContainer();
+    if (nsCOMPtr<nsIContentSecurityPolicy> targetCsp =
+            PolicyContainer::GetCSP(targetPolicyContainer)) {
+      bool upgradeInsecureRequests = false;
+      targetCsp->GetUpgradeInsecureRequests(&upgradeInsecureRequests);
+      if (upgradeInsecureRequests) {
+        // Set PrincipalToInherit to mark this as an iframe-initiated
+        // top-level navigation where we've checked the upgrade logic.
+        aLoadState->SetPrincipalToInherit(targetDoc->NodePrincipal());
+        if (nsContentSecurityUtils::IsUpgradeInsecureRequestsPortCompatible(
+                aURI, targetDoc->NodePrincipal())) {
+          // Ports match - use target PolicyContainer for upgrade
+          aLoadState->SetPolicyContainer(targetPolicyContainer);
+        } else {
+          // Ports don't match - clear PolicyContainer to prevent upgrade
+          aLoadState->SetPolicyContainer(nullptr);
+        }
+        return;
+      }
+    }
+  }
+
+  // If target didn't have upgrade-insecure-requests, check the SOURCE
+  // document (e.g., an iframe with upgrade-insecure-requests navigating the
+  // top frame)
+  if (aSourceDocument) {
+    nsCOMPtr<nsIPolicyContainer> sourcePolicyContainer =
+        aLoadState->PolicyContainer();
+    if (nsCOMPtr<nsIContentSecurityPolicy> sourceCsp =
+            PolicyContainer::GetCSP(sourcePolicyContainer)) {
+      bool upgradeInsecureRequests = false;
+      sourceCsp->GetUpgradeInsecureRequests(&upgradeInsecureRequests);
+      if (upgradeInsecureRequests) {
+        if (!nsContentSecurityUtils::IsUpgradeInsecureRequestsPortCompatible(
+                aURI, aSourceDocument->NodePrincipal())) {
+          // Ports don't match - clear PolicyContainer to prevent upgrade
+          aLoadState->SetPrincipalToInherit(aSourceDocument->NodePrincipal());
+          aLoadState->SetPolicyContainer(nullptr);
+        }
+      }
+    }
+  }
+}
+
 // https://html.spec.whatwg.org/#navigate
 // In its current state, this method is not closely following the spec.
 // https://bugzil.la/1974717 tracks the work to align this method with the spec.
@@ -2481,6 +2543,9 @@ void BrowsingContext::Navigate(
   loadState->SetFirstParty(true);
   loadState->SetNavigationAPIState(aNavigationAPIState);
   loadState->SetNavigationAPIMethodTracker(aNavigationAPIMethodTracker);
+
+  MaybeHandleUpgradeInsecureRequestsForNavigation(this, aURI, aSourceDocument,
+                                                  loadState);
 
   rv = LoadURI(loadState);
   if (NS_WARN_IF(NS_FAILED(rv))) {

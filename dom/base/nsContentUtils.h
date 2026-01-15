@@ -973,6 +973,16 @@ class nsContentUtils {
    */
   static bool IsAbsoluteURL(const nsACString& aURL);
 
+  /**
+   * Check if a URL contains dangling markup, which is a potential security
+   * risk. A URL is considered to contain dangling markup if it has both:
+   * - An ASCII tab or newline character (\t, \n, \r)
+   * - A less-than sign (<)
+   * https://html.spec.whatwg.org/multipage/urls-and-fetching.html#create-a-potential-cors-request
+   */
+  static bool URLHasDanglingMarkup(const nsAString& aURL);
+  static bool URLHasDanglingMarkup(const nsACString& aURL);
+
   // Check if a node is in the document prolog, i.e. before the document
   // element.
   static bool InProlog(nsINode* aNode);
@@ -1013,6 +1023,9 @@ class nsContentUtils {
                                             const nsAString& aSpec,
                                             Document* aDocument,
                                             nsIURI* aBaseURI);
+  static nsresult HTMLParseURLAndNewURIWithDocumentCharset(
+      nsIURI** aResult, const nsAString& aSpec, Document* aDocument,
+      nsIURI* aBaseURI);
 
   /**
    * Returns true if |aAtom| contains at least one |aChar|.

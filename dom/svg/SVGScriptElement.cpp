@@ -136,7 +136,8 @@ void SVGScriptElement::FreezeExecutionAttrs(const Document* aOwnerDoc) {
                        GetScriptColumnNumber().oneOriginValue()};
     // Empty src should be treated as invalid URL.
     if (!src.IsEmpty()) {
-      NS_NewURI(getter_AddRefs(mUri), src, nullptr, GetBaseURI());
+      nsContentUtils::HTMLParseURLAndNewURIWithDocumentCharset(
+          getter_AddRefs(mUri), src, OwnerDoc(), GetBaseURI());
 
       if (!mUri) {
         AutoTArray<nsString, 2> params = {

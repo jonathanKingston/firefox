@@ -532,14 +532,14 @@ void nsFrameLoader::LoadFrame(bool aOriginalSrc,
   auto* lazyBaseURI = GetLazyLoadFrameResumptionState().mBaseURI.get();
   nsIURI* baseURI = lazyBaseURI ? lazyBaseURI : mOwnerContent->GetBaseURI();
 
-  auto encoding = doc->GetDocumentCharacterSet();
-
   nsCOMPtr<nsIURI> uri;
-  nsresult rv = NS_NewURI(getter_AddRefs(uri), src, encoding, baseURI);
+  nsresult rv = nsContentUtils::HTMLParseURLAndNewURIWithDocumentCharset(
+      getter_AddRefs(uri), src, doc, baseURI);
 
   // If the URI was malformed, try to recover by loading about:blank.
   if (rv == NS_ERROR_MALFORMED_URI) {
-    rv = NS_NewURI(getter_AddRefs(uri), u"about:blank"_ns, encoding, baseURI);
+    rv = nsContentUtils::HTMLParseURLAndNewURIWithDocumentCharset(
+        getter_AddRefs(uri), u"about:blank"_ns, doc, baseURI);
   }
 
   if (NS_SUCCEEDED(rv)) {

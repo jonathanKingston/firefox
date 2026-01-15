@@ -2466,6 +2466,42 @@ bool nsContentUtils::IsAbsoluteURL(const nsACString& aURL) {
   return false;
 }
 
+namespace {
+template <typename TString, typename TChar>
+bool URLHasDanglingMarkupImpl(const TString& aURL) {
+  nsAutoCString scheme;
+  if (NS_SUCCEEDED(net_ExtractURLScheme(aURL, scheme)) &&
+      scheme.EqualsLiteral("data")) {
+    return false;
+  }
+  // A URL has dangling markup if it contains both:
+  // 1. An ASCII tab or newline character (\t, \n, \r)
+  // 2. A less-than sign (<)
+  // https://github.com/whatwg/html/pull/10022
+  const TChar chars[] = {'\t', '\n', '\r', '<', 0};
+  auto pos = aURL.FindCharInSet(chars);
+  if (pos == static_cast<decltype(pos)>(kNotFound)) {
+    return false;
+  }
+  if (aURL[pos] == static_cast<TChar>('<')) {
+    const TChar whitespaceChars[] = {'\t', '\n', '\r', 0};
+    return Substring(aURL, pos).FindCharInSet(whitespaceChars) !=
+           static_cast<decltype(pos)>(kNotFound);
+  }
+  return Substring(aURL, pos).Contains(static_cast<TChar>('<'));
+}
+}  // namespace
+
+// static
+bool nsContentUtils::URLHasDanglingMarkup(const nsAString& aURL) {
+  return URLHasDanglingMarkupImpl<nsAString, char16_t>(aURL);
+}
+
+// static
+bool nsContentUtils::URLHasDanglingMarkup(const nsACString& aURL) {
+  return URLHasDanglingMarkupImpl<nsACString, char>(aURL);
+}
+
 // static
 bool nsContentUtils::InProlog(nsINode* aNode) {
   MOZ_ASSERT(aNode, "missing node to nsContentUtils::InProlog");
@@ -4333,6 +4369,43 @@ nsresult nsContentUtils::NewURIWithDocumentCharset(nsIURI** aResult,
                      aBaseURI);
   }
   return NS_NewURI(aResult, aSpec, nullptr, aBaseURI);
+}
+
+// static
+nsresult nsContentUtils::HTMLParseURLAndNewURIWithDocumentCharset(
+    nsIURI** aResult, const nsAString& aSpec, Document* aDocument,
+    nsIURI* aBaseURI) {
+  if (!StaticPrefs::dom_security_block_dangling_markup_in_url()) {
+    return NewURIWithDocumentCharset(aResult, aSpec, aDocument, aBaseURI);
+  }
+
+  // Block URLs that contain dangling markup (both newline chars and <)
+  // https://github.com/whatwg/html/pull/10022
+  if (URLHasDanglingMarkup(aSpec)) {
+    return NS_ERROR_MALFORMED_URI;
+  }
+
+  nsAutoCString scheme;
+  if (NS_SUCCEEDED(net_ExtractURLScheme(aSpec, scheme)) &&
+      scheme.EqualsLiteral("data")) {
+    return NewURIWithDocumentCharset(aResult, aSpec, aDocument, aBaseURI);
+  }
+
+  nsAutoString normalized;
+  normalized.SetCapacity(aSpec.Length());
+  for (uint32_t i = 0; i < aSpec.Length(); ++i) {
+    const char16_t c = aSpec[i];
+    if (c == u'\t' || c == u'\n' || c == u'\r' || c == u'\f' || c == u' ') {
+      continue;
+    }
+    if (c == u'<') {
+      normalized.AppendLiteral("%3C");
+      continue;
+    }
+    normalized.Append(c);
+  }
+
+  return NewURIWithDocumentCharset(aResult, normalized, aDocument, aBaseURI);
 }
 
 // static

@@ -4543,6 +4543,13 @@
   value: true
   mirror: always
 
+# Block URLs that contain dangling markup (both newline chars and <).
+# https://github.com/whatwg/html/pull/10022
+- name: dom.security.block_dangling_markup_in_url
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 # For testing purposes only; Flipping this pref to true allows
 # to skip the assertion that remote scripts can not be loaded
 # in system privileged contexts.

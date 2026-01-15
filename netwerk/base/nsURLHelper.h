@@ -58,10 +58,11 @@ bool net_IsAbsoluteURL(const nsACString& uri);
 /**
  * Extract URI-Scheme if possible
  *
- * @param inURI     URI spec
+ * @param inURI     URI spec (can be nsACString or nsAString)
  * @param scheme    scheme copied to this buffer on return. Is lowercase.
  */
 nsresult net_ExtractURLScheme(const nsACString& inURI, nsACString& scheme);
+nsresult net_ExtractURLScheme(const nsAString& inURI, nsACString& scheme);
 
 /* check that the given scheme conforms to RFC 2396 */
 bool net_IsValidScheme(const nsACString& scheme);

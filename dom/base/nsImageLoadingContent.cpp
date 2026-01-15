@@ -1544,15 +1544,10 @@ nsresult nsImageLoadingContent::StringToURI(const nsAString& aSpec,
   MOZ_ASSERT(aDocument, "Must have a document");
   MOZ_ASSERT(aURI, "Null out param");
 
-  // (1) Get the base URI
   nsIContent* thisContent = AsContent();
   nsIURI* baseURL = thisContent->GetBaseURI();
-
-  // (2) Get the charset
-  auto encoding = aDocument->GetDocumentCharacterSet();
-
-  // (3) Construct the silly thing
-  return NS_NewURI(aURI, aSpec, encoding, baseURL);
+  return nsContentUtils::HTMLParseURLAndNewURIWithDocumentCharset(
+      aURI, aSpec, aDocument, baseURL);
 }
 
 nsresult nsImageLoadingContent::FireEvent(const nsAString& aEventType,

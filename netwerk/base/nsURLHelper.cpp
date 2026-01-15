@@ -378,11 +378,12 @@ mozilla::Maybe<mozilla::CompactPair<uint32_t, uint32_t>> net_CoalesceDirs(
 // scheme fu
 //----------------------------------------------------------------------------
 
-static bool net_IsValidSchemeChar(const char aChar) {
-  return mozilla::net::rust_net_is_valid_scheme_char(aChar);
+template <typename TChar>
+static bool net_IsValidSchemeChar(const TChar aChar) {
+  return IsAsciiAlphanumeric(aChar) || aChar == '+' || aChar == '.' ||
+         aChar == '-';
 }
 
-/* Extract URI-Scheme if possible */
 nsresult net_ExtractURLScheme(const nsACString& inURI, nsACString& scheme) {
   nsACString::const_iterator start, end;
   inURI.BeginReading(start);
@@ -399,12 +400,10 @@ nsresult net_ExtractURLScheme(const nsACString& inURI, nsACString& scheme) {
   Tokenizer p(Substring(start, end), "\r\n\t");
   p.Record();
   if (!p.CheckChar(IsAsciiAlpha)) {
-    // First char must be alpha
     return NS_ERROR_MALFORMED_URI;
   }
 
-  while (p.CheckChar(net_IsValidSchemeChar) || p.CheckWhite()) {
-    // Skip valid scheme characters or \r\n\t
+  while (p.CheckChar(net_IsValidSchemeChar<char>) || p.CheckWhite()) {
   }
 
   if (!p.CheckChar(':')) {
@@ -412,6 +411,41 @@ nsresult net_ExtractURLScheme(const nsACString& inURI, nsACString& scheme) {
   }
 
   p.Claim(scheme);
+  scheme.StripTaggedASCII(ASCIIMask::MaskCRLFTab());
+  ToLowerCase(scheme);
+  return NS_OK;
+}
+
+nsresult net_ExtractURLScheme(const nsAString& inURI, nsACString& scheme) {
+  nsAString::const_iterator start, end;
+  inURI.BeginReading(start);
+  inURI.EndReading(end);
+
+  // Strip C0 and space from begining
+  while (start != end) {
+    if (static_cast<char16_t>(*start) > 0x20) {
+      break;
+    }
+    start++;
+  }
+
+  const char16_t whitespaces[] = {u'\r', u'\n', u'\t', 0};
+  Tokenizer16 p(Substring(start, end), whitespaces);
+  p.Record();
+  if (!p.CheckChar(IsAsciiAlpha<char16_t>)) {
+    return NS_ERROR_MALFORMED_URI;
+  }
+
+  while (p.CheckChar(net_IsValidSchemeChar<char16_t>) || p.CheckWhite()) {
+  }
+
+  if (!p.CheckChar(u':')) {
+    return NS_ERROR_MALFORMED_URI;
+  }
+
+  nsDependentSubstring claimed;
+  p.Claim(claimed);
+  LossyCopyUTF16toASCII(claimed, scheme);
   scheme.StripTaggedASCII(ASCIIMask::MaskCRLFTab());
   ToLowerCase(scheme);
   return NS_OK;

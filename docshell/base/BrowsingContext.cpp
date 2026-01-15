@@ -32,6 +32,8 @@
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/DocumentPictureInPicture.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/PolicyContainer.h"
+#include "nsContentSecurityUtils.h"
 #include "mozilla/dom/Geolocation.h"
 #include "mozilla/dom/HTMLEmbedElement.h"
 #include "mozilla/dom/HTMLIFrameElement.h"
@@ -79,6 +81,7 @@
 
 #include "nsDocShell.h"
 #include "nsDocShellLoadState.h"
+#include "nsHttp.h"
 #include "nsFocusManager.h"
 #include "nsGlobalWindowInner.h"
 #include "nsGlobalWindowOuter.h"
@@ -535,6 +538,13 @@ already_AddRefed<BrowsingContext> BrowsingContext::CreateDetached(
     context->mOriginAttributes = inherit->mOriginAttributes;
   }
 
+  // Per spec Section 3.3, nested browsing contexts inherit the upgrade
+  // insecure navigations set from the embedding document's browsing context.
+  // https://w3c.github.io/webappsec-upgrade-insecure-requests/#nesting
+  if (parentBC) {
+    context->InheritUpgradeInsecureNavigationsSet(parentBC);
+  }
+
   nsCOMPtr<nsIRequestContextService> rcsvc =
       net::RequestContextService::GetOrCreate();
   if (rcsvc) {
@@ -559,6 +569,36 @@ already_AddRefed<BrowsingContext> BrowsingContext::CreateIndependent(
   bc->mEmbeddedByThisProcess = true;
   bc->EnsureAttached();
   return bc.forget();
+}
+
+void BrowsingContext::AddUpgradeInsecureNavigationEntry(const nsACString& aHost,
+                                                        int32_t aPort) {
+  UpgradeInsecureNavigationEntry entry;
+  entry.mHost = aHost;
+  entry.mPort = aPort;
+  if (!mUpgradeInsecureNavigationsSet.Contains(entry)) {
+    mUpgradeInsecureNavigationsSet.AppendElement(entry);
+  }
+}
+
+bool BrowsingContext::IsInUpgradeInsecureNavigationsSet(const nsACString& aHost,
+                                                        int32_t aPort) const {
+  UpgradeInsecureNavigationEntry entry;
+  entry.mHost = aHost;
+  entry.mPort = aPort;
+  return mUpgradeInsecureNavigationsSet.Contains(entry);
+}
+
+void BrowsingContext::InheritUpgradeInsecureNavigationsSet(
+    BrowsingContext* aOther) {
+  if (!aOther) {
+    return;
+  }
+  for (const auto& entry : aOther->mUpgradeInsecureNavigationsSet) {
+    if (!mUpgradeInsecureNavigationsSet.Contains(entry)) {
+      mUpgradeInsecureNavigationsSet.AppendElement(entry);
+    }
+  }
 }
 
 void BrowsingContext::EnsureAttached() {
@@ -621,6 +661,10 @@ mozilla::ipc::IPCResult BrowsingContext::CreateFromIPC(
   context->SetRemoteSubframes(aInit.mUseRemoteSubframes);
   context->mRequestContextId = aInit.mRequestContextId;
   // NOTE: Private browsing ID is set by `SetOriginAttributes`.
+
+  // Restore the upgrade insecure navigations set from the initializer.
+  context->mUpgradeInsecureNavigationsSet =
+      std::move(aInit.mUpgradeInsecureNavigationsSet);
 
   if (const char* failure =
           context->BrowsingContextCoherencyChecks(aOriginProcess)) {
@@ -2430,6 +2474,108 @@ BrowsingContext::CheckURLAndCreateLoadState(nsIURI* aURI,
   return loadState.forget();
 }
 
+// For top-level HTTP navigations, check if upgrade-insecure-requests should
+// apply based on CSP and (host, port) matching.
+//
+// https://w3c.github.io/webappsec-upgrade-insecure-requests/#upgrade-request
+// Section 4.1 step 2.4: For navigation requests, upgrades only happen if
+// the (host, port) tuple is in the client's "upgrade insecure navigations set".
+// Section 4.1 step 5: UIR only changes the scheme, not the port.
+static bool HostPortMatch(nsIURI* aURI1, nsIURI* aURI2) {
+  if (!aURI1 || !aURI2) {
+    return false;
+  }
+  nsAutoCString host1, host2;
+  int32_t port1 = -1, port2 = -1;
+  if (NS_FAILED(aURI1->GetHost(host1)) || NS_FAILED(aURI1->GetPort(&port1)) ||
+      NS_FAILED(aURI2->GetHost(host2)) || NS_FAILED(aURI2->GetPort(&port2))) {
+    return false;
+  }
+  // Normalize default ports
+  if (port1 == -1) {
+    port1 =
+        aURI1->SchemeIs("https") ? NS_HTTPS_DEFAULT_PORT : NS_HTTP_DEFAULT_PORT;
+  }
+  if (port2 == -1) {
+    port2 =
+        aURI2->SchemeIs("https") ? NS_HTTPS_DEFAULT_PORT : NS_HTTP_DEFAULT_PORT;
+  }
+  return host1.Equals(host2) && port1 == port2;
+}
+
+static void MaybeHandleUpgradeInsecureRequestsForNavigation(
+    BrowsingContext* aBrowsingContext, nsIURI* aURI, Document* aSourceDocument,
+    nsDocShellLoadState* aLoadState) {
+  if (!aBrowsingContext->IsTopContent() || !aURI || !aURI->SchemeIs("http")) {
+    return;
+  }
+
+  nsAutoCString navHost;
+  int32_t navPort = -1;
+  if (NS_FAILED(aURI->GetHost(navHost)) || NS_FAILED(aURI->GetPort(&navPort))) {
+    return;
+  }
+
+  Document* targetDoc = aBrowsingContext->GetDocument();
+
+  // Check if the TARGET document (top frame) has UIR and the navigation's
+  // (host, port) matches. Per spec, the upgrade happens if the navigation
+  // URL's (host, port) is in the upgrade insecure navigations set.
+  bool targetHasMatchingUIR = false;
+  if (targetDoc) {
+    nsCOMPtr<nsIPolicyContainer> targetPolicyContainer =
+        targetDoc->GetPolicyContainer();
+    if (nsCOMPtr<nsIContentSecurityPolicy> targetCsp =
+            PolicyContainer::GetCSP(targetPolicyContainer)) {
+      bool targetHasUIR = false;
+      targetCsp->GetUpgradeInsecureRequests(&targetHasUIR);
+      if (targetHasUIR) {
+        // Per spec, check if nav (host, port) matches target's (host, port)
+        targetHasMatchingUIR = HostPortMatch(aURI, targetDoc->GetDocumentURI());
+      }
+    }
+  }
+
+  // Check if the SOURCE document (initiating the navigation) has UIR and
+  // the navigation's (host, port) matches its document URI.
+  bool sourceHasMatchingUIR = false;
+  if (aSourceDocument) {
+    nsCOMPtr<nsIPolicyContainer> sourcePolicyContainer =
+        aSourceDocument->GetPolicyContainer();
+    if (nsCOMPtr<nsIContentSecurityPolicy> sourceCsp =
+            PolicyContainer::GetCSP(sourcePolicyContainer)) {
+      bool sourceHasUIR = false;
+      sourceCsp->GetUpgradeInsecureRequests(&sourceHasUIR);
+      if (sourceHasUIR) {
+        // Per spec, check if nav (host, port) matches source's (host, port)
+        sourceHasMatchingUIR =
+            HostPortMatch(aURI, aSourceDocument->GetDocumentURI());
+      }
+    }
+  }
+
+  // Also check the inherited set from the BC hierarchy for cross-origin cases.
+  BrowsingContext* sourceBC =
+      aSourceDocument ? aSourceDocument->GetBrowsingContext() : nullptr;
+  bool inInheritedSet =
+      sourceBC && sourceBC->IsInUpgradeInsecureNavigationsSet(navHost, navPort);
+
+  if (targetHasMatchingUIR || sourceHasMatchingUIR || inInheritedSet) {
+    // Signal that upgrade was requested by policy. nsDocShell will perform
+    // same-origin and port compatibility checks before actually upgrading.
+    aLoadState->SetUpgradeInsecureNavigationRequested(true);
+    // Set PrincipalToInherit for the same-origin check in nsDocShell.
+    // This handles sandboxed iframes with null triggering principal.
+    if (targetDoc) {
+      aLoadState->SetPrincipalToInherit(targetDoc->NodePrincipal());
+    }
+  } else if (aSourceDocument &&
+             aSourceDocument->GetUpgradeInsecureRequests(false)) {
+    // Source has UIR but the navigation (host, port) doesn't match - skip.
+    aLoadState->SetShouldSkipUpgradeInsecureRequests(true);
+  }
+}
+
 // https://html.spec.whatwg.org/#navigate
 // In its current state, this method is not closely following the spec.
 // https://bugzil.la/1974717 tracks the work to align this method with the spec.
@@ -2492,6 +2638,9 @@ void BrowsingContext::Navigate(
   loadState->SetFirstParty(true);
   loadState->SetNavigationAPIState(aNavigationAPIState);
   loadState->SetNavigationAPIMethodTracker(aNavigationAPIMethodTracker);
+
+  MaybeHandleUpgradeInsecureRequestsForNavigation(this, aURI, aSourceDocument,
+                                                  loadState);
 
   rv = LoadURI(loadState);
   if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -2999,6 +3148,7 @@ BrowsingContext::IPCInitializer BrowsingContext::GetIPCInitializer() {
   }
   init.mRequestContextId = mRequestContextId;
   init.mFields = mFields.RawValues();
+  init.mUpgradeInsecureNavigationsSet = mUpgradeInsecureNavigationsSet.Clone();
   return init;
 }
 
@@ -4610,6 +4760,18 @@ bool ParamTraits<MaybeDiscarded<BrowsingContext>>::Read(
   return true;
 }
 
+void ParamTraits<mozilla::dom::UpgradeInsecureNavigationEntry>::Write(
+    IPC::MessageWriter* aWriter, const paramType& aParam) {
+  WriteParam(aWriter, aParam.mHost);
+  WriteParam(aWriter, aParam.mPort);
+}
+
+bool ParamTraits<mozilla::dom::UpgradeInsecureNavigationEntry>::Read(
+    IPC::MessageReader* aReader, paramType* aResult) {
+  return ReadParam(aReader, &aResult->mHost) &&
+         ReadParam(aReader, &aResult->mPort);
+}
+
 void ParamTraits<BrowsingContext::IPCInitializer>::Write(
     IPC::MessageWriter* aWriter, const paramType& aInit) {
   // Write actor ID parameters.
@@ -4625,6 +4787,7 @@ void ParamTraits<BrowsingContext::IPCInitializer>::Write(
   WriteParam(aWriter, aInit.mSessionHistoryIndex);
   WriteParam(aWriter, aInit.mSessionHistoryCount);
   WriteParam(aWriter, aInit.mFields);
+  WriteParam(aWriter, aInit.mUpgradeInsecureNavigationsSet);
 }
 
 bool ParamTraits<BrowsingContext::IPCInitializer>::Read(
@@ -4641,7 +4804,8 @@ bool ParamTraits<BrowsingContext::IPCInitializer>::Read(
          ReadParam(aReader, &aInit->mRequestContextId) &&
          ReadParam(aReader, &aInit->mSessionHistoryIndex) &&
          ReadParam(aReader, &aInit->mSessionHistoryCount) &&
-         ReadParam(aReader, &aInit->mFields);
+         ReadParam(aReader, &aInit->mFields) &&
+         ReadParam(aReader, &aInit->mUpgradeInsecureNavigationsSet);
 }
 
 template struct ParamTraits<BrowsingContext::BaseTransaction>;

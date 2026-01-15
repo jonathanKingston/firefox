@@ -29,6 +29,7 @@
 #include "nsCycleCollectionParticipant.h"
 #include "nsIDocShell.h"
 #include "nsTArray.h"
+#include "nsTHashSet.h"
 #include "nsWrapperCache.h"
 #include "nsILoadInfo.h"
 #include "nsILoadContext.h"
@@ -101,6 +102,17 @@ struct EmbedderColorSchemes {
 
   bool operator!=(const EmbedderColorSchemes& aOther) const {
     return !(*this == aOther);
+  }
+};
+
+// Entry in the upgrade insecure navigations set per spec Section 3:
+// https://w3c.github.io/webappsec-upgrade-insecure-requests/#upgrade-insecure-navigations-set
+struct UpgradeInsecureNavigationEntry {
+  nsCString mHost;
+  int32_t mPort;
+
+  bool operator==(const UpgradeInsecureNavigationEntry& aOther) const {
+    return mHost.Equals(aOther.mHost) && mPort == aOther.mPort;
   }
 };
 
@@ -506,6 +518,17 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   bool IsFramebustingAllowedInner();
 
   void DisplayLoadError(const nsAString& aURI);
+
+  // Upgrade Insecure Navigations Set - per spec Section 3:
+  // https://w3c.github.io/webappsec-upgrade-insecure-requests/#upgrade-insecure-navigations-set
+  // Add a (host, port) tuple to the upgrade insecure navigations set.
+  void AddUpgradeInsecureNavigationEntry(const nsACString& aHost,
+                                         int32_t aPort);
+  // Check if a (host, port) tuple is in the upgrade insecure navigations set.
+  bool IsInUpgradeInsecureNavigationsSet(const nsACString& aHost,
+                                         int32_t aPort) const;
+  // Inherit the upgrade insecure navigations set from another context.
+  void InheritUpgradeInsecureNavigationsSet(BrowsingContext* aOther);
 
   // Check that this browsing context is targetable for navigations (i.e. that
   // it is neither closed, cached, nor discarded).
@@ -927,6 +950,12 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
     uint64_t mRequestContextId = 0;
 
     FieldValues mFields;
+
+    // Upgrade insecure navigations set - inherited from embedding document
+    // at BC creation time. Synced via IPC to ensure cross-process navigations
+    // can still check the inherited set per spec Section 3.
+    CopyableTArray<UpgradeInsecureNavigationEntry>
+        mUpgradeInsecureNavigationsSet;
   };
 
   // Create an IPCInitializer object for this BrowsingContext.
@@ -1687,6 +1716,14 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   mozilla::TimeStamp mNavigationRateLimitSpanStart;
 
   mozilla::LinkedList<dom::Location> mLocations;
+
+  // Upgrade insecure navigations set per spec Section 3:
+  // https://w3c.github.io/webappsec-upgrade-insecure-requests/#upgrade-insecure-navigations-set
+  // Contains (host, port) tuples that should be upgraded for navigation
+  // requests. Inherited from the embedding document when a nested browsing
+  // context is created, and populated when a document with
+  // upgrade-insecure-requests CSP loads.
+  nsTArray<UpgradeInsecureNavigationEntry> mUpgradeInsecureNavigationsSet;
 };
 
 /**
@@ -1723,6 +1760,13 @@ template <>
 struct ParamTraits<
     mozilla::dom::MaybeDiscarded<mozilla::dom::BrowsingContext>> {
   using paramType = mozilla::dom::MaybeDiscarded<mozilla::dom::BrowsingContext>;
+  static void Write(IPC::MessageWriter* aWriter, const paramType& aParam);
+  static bool Read(IPC::MessageReader* aReader, paramType* aResult);
+};
+
+template <>
+struct ParamTraits<mozilla::dom::UpgradeInsecureNavigationEntry> {
+  using paramType = mozilla::dom::UpgradeInsecureNavigationEntry;
   static void Write(IPC::MessageWriter* aWriter, const paramType& aParam);
   static bool Read(IPC::MessageReader* aReader, paramType* aResult);
 };

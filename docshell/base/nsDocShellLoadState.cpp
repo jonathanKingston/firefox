@@ -69,6 +69,10 @@ nsDocShellLoadState::nsDocShellLoadState(
   mNotifiedBeforeUnloadListeners = aLoadState.NotifiedBeforeUnloadListeners();
   mForceAllowDataURI = aLoadState.ForceAllowDataURI();
   mIsExemptFromHTTPSFirstMode = aLoadState.IsExemptFromHTTPSFirstMode();
+  mShouldSkipUpgradeInsecureRequests =
+      aLoadState.ShouldSkipUpgradeInsecureRequests();
+  mUpgradeInsecureNavigationRequested =
+      aLoadState.UpgradeInsecureNavigationRequested();
   mOriginalFrameSrc = aLoadState.OriginalFrameSrc();
   mShouldCheckForRecursion = aLoadState.ShouldCheckForRecursion();
   mIsFormSubmission = aLoadState.IsFormSubmission();
@@ -187,6 +191,10 @@ nsDocShellLoadState::nsDocShellLoadState(const nsDocShellLoadState& aOther)
       mPartitionedPrincipalToInherit(aOther.mPartitionedPrincipalToInherit),
       mForceAllowDataURI(aOther.mForceAllowDataURI),
       mIsExemptFromHTTPSFirstMode(aOther.mIsExemptFromHTTPSFirstMode),
+      mShouldSkipUpgradeInsecureRequests(
+          aOther.mShouldSkipUpgradeInsecureRequests),
+      mUpgradeInsecureNavigationRequested(
+          aOther.mUpgradeInsecureNavigationRequested),
       mHttpsFirstDowngradeData(aOther.GetHttpsFirstDowngradeData()),
       mOriginalFrameSrc(aOther.mOriginalFrameSrc),
       mShouldCheckForRecursion(aOther.mShouldCheckForRecursion),
@@ -252,6 +260,8 @@ nsDocShellLoadState::nsDocShellLoadState(nsIURI* aURI, uint64_t aLoadIdentifier)
       mNotifiedBeforeUnloadListeners(false),
       mForceAllowDataURI(false),
       mIsExemptFromHTTPSFirstMode(false),
+      mShouldSkipUpgradeInsecureRequests(false),
+      mUpgradeInsecureNavigationRequested(false),
       mOriginalFrameSrc(false),
       mShouldCheckForRecursion(false),
       mIsFormSubmission(false),
@@ -703,6 +713,24 @@ bool nsDocShellLoadState::IsExemptFromHTTPSFirstMode() const {
 void nsDocShellLoadState::SetIsExemptFromHTTPSFirstMode(
     bool aIsExemptFromHTTPSFirstMode) {
   mIsExemptFromHTTPSFirstMode = aIsExemptFromHTTPSFirstMode;
+}
+
+bool nsDocShellLoadState::ShouldSkipUpgradeInsecureRequests() const {
+  return mShouldSkipUpgradeInsecureRequests;
+}
+
+void nsDocShellLoadState::SetShouldSkipUpgradeInsecureRequests(
+    bool aShouldSkipUpgradeInsecureRequests) {
+  mShouldSkipUpgradeInsecureRequests = aShouldSkipUpgradeInsecureRequests;
+}
+
+bool nsDocShellLoadState::UpgradeInsecureNavigationRequested() const {
+  return mUpgradeInsecureNavigationRequested;
+}
+
+void nsDocShellLoadState::SetUpgradeInsecureNavigationRequested(
+    bool aUpgradeInsecureNavigationRequested) {
+  mUpgradeInsecureNavigationRequested = aUpgradeInsecureNavigationRequested;
 }
 
 RefPtr<HTTPSFirstDowngradeData>
@@ -1409,6 +1437,10 @@ DocShellLoadStateInit nsDocShellLoadState::Serialize(
   loadState.NotifiedBeforeUnloadListeners() = mNotifiedBeforeUnloadListeners;
   loadState.ForceAllowDataURI() = mForceAllowDataURI;
   loadState.IsExemptFromHTTPSFirstMode() = mIsExemptFromHTTPSFirstMode;
+  loadState.ShouldSkipUpgradeInsecureRequests() =
+      mShouldSkipUpgradeInsecureRequests;
+  loadState.UpgradeInsecureNavigationRequested() =
+      mUpgradeInsecureNavigationRequested;
   loadState.OriginalFrameSrc() = mOriginalFrameSrc;
   loadState.ShouldCheckForRecursion() = mShouldCheckForRecursion;
   loadState.IsFormSubmission() = mIsFormSubmission;

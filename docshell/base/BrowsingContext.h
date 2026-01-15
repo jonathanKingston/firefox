@@ -29,6 +29,7 @@
 #include "nsCycleCollectionParticipant.h"
 #include "nsIDocShell.h"
 #include "nsTArray.h"
+#include "nsTHashSet.h"
 #include "nsWrapperCache.h"
 #include "nsILoadInfo.h"
 #include "nsILoadContext.h"
@@ -101,6 +102,17 @@ struct EmbedderColorSchemes {
 
   bool operator!=(const EmbedderColorSchemes& aOther) const {
     return !(*this == aOther);
+  }
+};
+
+// Entry in the upgrade insecure navigations set per spec Section 3:
+// https://w3c.github.io/webappsec-upgrade-insecure-requests/#upgrade-insecure-navigations-set
+struct UpgradeInsecureNavigationEntry {
+  nsCString mHost;
+  int32_t mPort;
+
+  bool operator==(const UpgradeInsecureNavigationEntry& aOther) const {
+    return mHost.Equals(aOther.mHost) && mPort == aOther.mPort;
   }
 };
 
@@ -506,6 +518,16 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   bool IsFramebustingAllowedInner();
 
   void DisplayLoadError(const nsAString& aURI);
+
+  // Upgrade Insecure Navigations Set - per spec Section 3:
+  // https://w3c.github.io/webappsec-upgrade-insecure-requests/#upgrade-insecure-navigations-set
+  // Add a (host, port) tuple to the upgrade insecure navigations set.
+  void AddUpgradeInsecureNavigationEntry(const nsACString& aHost,
+                                         int32_t aPort);
+  // Check if a (host, port) tuple is in the upgrade insecure navigations set.
+  // Walks up the parent chain per spec Section 3.3 inheritance.
+  bool IsInUpgradeInsecureNavigationsSet(const nsACString& aHost,
+                                         int32_t aPort) const;
 
   // Check that this browsing context is targetable for navigations (i.e. that
   // it is neither closed, cached, nor discarded).
@@ -1687,6 +1709,14 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   mozilla::TimeStamp mNavigationRateLimitSpanStart;
 
   mozilla::LinkedList<dom::Location> mLocations;
+
+  // Upgrade insecure navigations set per spec Section 3:
+  // https://w3c.github.io/webappsec-upgrade-insecure-requests/#upgrade-insecure-navigations-set
+  // Contains (host, port) tuples that should be upgraded for navigation
+  // requests. Populated when a document with upgrade-insecure-requests CSP
+  // loads. Inheritance per spec Section 3.3 is handled by walking up the
+  // parent chain in IsInUpgradeInsecureNavigationsSet().
+  nsTArray<UpgradeInsecureNavigationEntry> mUpgradeInsecureNavigationsSet;
 };
 
 /**

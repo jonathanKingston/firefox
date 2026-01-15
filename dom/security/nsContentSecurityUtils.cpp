@@ -15,6 +15,7 @@
 #include "mozilla/dom/WorkerPrivate.h"
 #include "mozilla/dom/nsMixedContentBlocker.h"
 #include "nsComponentManagerUtils.h"
+#include "nsHttp.h"
 #include "nsIChannel.h"
 #include "nsIContentSecurityPolicy.h"
 #include "nsIHttpChannel.h"
@@ -116,6 +117,46 @@ bool nsContentSecurityUtils::IsConsideredSameOriginForUIR(
       MakeHTTPPrincipalHTTPS(aResultPrincipal);
 
   return compareTriggeringPrincipal->Equals(compareResultPrincipal);
+}
+
+// https://w3c.github.io/webappsec-upgrade-insecure-requests/#upgrade-request
+// Section 4.1 step 5: upgrade-insecure-requests changes the URL scheme
+// from "http" to "https".
+// Section 4.1 step 6: If the port is explicitly 80, it's changed to 443.
+// Non-standard ports are NOT modified. This means http://host:8443 becomes
+// https://host:8443, which only works if the server speaks HTTPS on that port.
+// This function checks if the HTTP navigation port is compatible with the
+// HTTPS document port for a successful upgrade.
+/* static */
+bool nsContentSecurityUtils::IsUpgradeInsecureRequestsPortCompatible(
+    int32_t aHttpPort, int32_t aHttpsPort) {
+  int32_t effectiveHttpPort =
+      (aHttpPort == -1) ? NS_HTTP_DEFAULT_PORT : aHttpPort;
+  int32_t effectiveHttpsPort =
+      (aHttpsPort == -1) ? NS_HTTPS_DEFAULT_PORT : aHttpsPort;
+
+  // Upgrade is valid if:
+  // 1. Ports match exactly (server speaks HTTPS on the same port)
+  // 2. Navigating from default HTTP (80) to default HTTPS (443)
+  return effectiveHttpPort == effectiveHttpsPort ||
+         (effectiveHttpPort == NS_HTTP_DEFAULT_PORT &&
+          effectiveHttpsPort == NS_HTTPS_DEFAULT_PORT);
+}
+
+/* static */
+bool nsContentSecurityUtils::IsUpgradeInsecureRequestsPortCompatible(
+    nsIURI* aHttpURI, nsIURI* aHttpsURI) {
+  int32_t httpPort = -1;
+  if (aHttpURI) {
+    aHttpURI->GetPort(&httpPort);
+  }
+
+  int32_t httpsPort = -1;
+  if (aHttpsURI) {
+    aHttpsURI->GetPort(&httpsPort);
+  }
+
+  return IsUpgradeInsecureRequestsPortCompatible(httpPort, httpsPort);
 }
 
 /* static */

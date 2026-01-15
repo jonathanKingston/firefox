@@ -10355,6 +10355,81 @@ nsIPrincipal* nsDocShell::GetInheritedPrincipal(
   return NS_OK;
 }
 
+static bool MaybeSetUpgradeInsecureRequestsOnChannel(
+    BrowsingContext* aBrowsingContext, nsDocShellLoadState* aLoadState,
+    LoadInfo* aLoadInfo, nsIChannel* aChannel, nsIContentSecurityPolicy* aCsp,
+    nsresult& aRv) {
+  if (aLoadState->ShouldSkipUpgradeInsecureRequests()) {
+    return true;
+  }
+
+  bool isTopLevelDocument = aLoadInfo->GetExternalContentPolicyType() ==
+                                ExtContentPolicy::TYPE_DOCUMENT &&
+                            aBrowsingContext &&
+                            aBrowsingContext->IsTopContent();
+
+  // Path 1: BrowsingContext::Navigate already verified the URL is in the
+  // upgrade insecure navigations set. Skip same-origin check since BC did it.
+  if (aLoadState->UpgradeInsecureNavigationRequested() && isTopLevelDocument) {
+    // For non-null triggering principals, check port compatibility.
+    // Sandboxed iframes have null principals; we trust the BC's verification.
+    nsCOMPtr<nsIPrincipal> triggeringPrincipal =
+        aLoadState->TriggeringPrincipal();
+    if (triggeringPrincipal && !triggeringPrincipal->GetIsNullPrincipal() &&
+        aLoadState->URI() && aLoadState->URI()->SchemeIs("http")) {
+      nsCOMPtr<nsIURI> triggeringURI;
+      triggeringPrincipal->GetURI(getter_AddRefs(triggeringURI));
+      if (!nsContentSecurityUtils::IsUpgradeInsecureRequestsPortCompatible(
+              aLoadState->URI(), triggeringURI)) {
+        return true;
+      }
+    }
+    aLoadInfo->SetUpgradeInsecureRequests(true);
+    return true;
+  }
+
+  // Path 2: Fallback for loads not going through BrowsingContext::Navigate.
+  // Check CSP for upgrade-insecure-requests and do same-origin check.
+  bool upgradeRequested = false;
+  if (aCsp) {
+    aCsp->GetUpgradeInsecureRequests(&upgradeRequested);
+  }
+  if (!upgradeRequested) {
+    return true;
+  }
+
+  nsCOMPtr<nsIPrincipal> triggeringPrincipal =
+      aLoadState->TriggeringPrincipal();
+  if (!triggeringPrincipal) {
+    return true;
+  }
+
+  nsCOMPtr<nsIPrincipal> resultPrincipal;
+  aRv = nsContentUtils::GetSecurityManager()->GetChannelResultPrincipal(
+      aChannel, getter_AddRefs(resultPrincipal));
+  NS_ENSURE_SUCCESS(aRv, false);
+
+  if (!nsContentSecurityUtils::IsConsideredSameOriginForUIR(triggeringPrincipal,
+                                                            resultPrincipal)) {
+    return true;
+  }
+
+  // Check port compatibility for document loads.
+  if (isTopLevelDocument && aLoadState->URI() &&
+      aLoadState->URI()->SchemeIs("http") &&
+      !triggeringPrincipal->GetIsNullPrincipal()) {
+    nsCOMPtr<nsIURI> triggeringURI;
+    triggeringPrincipal->GetURI(getter_AddRefs(triggeringURI));
+    if (!nsContentSecurityUtils::IsUpgradeInsecureRequestsPortCompatible(
+            aLoadState->URI(), triggeringURI)) {
+      return true;
+    }
+  }
+
+  aLoadInfo->SetUpgradeInsecureRequests(true);
+  return true;
+}
+
 /* static */ bool nsDocShell::CreateAndConfigureRealChannelForLoadState(
     BrowsingContext* aBrowsingContext, nsDocShellLoadState* aLoadState,
     LoadInfo* aLoadInfo, nsIInterfaceRequestor* aCallbacks,
@@ -10648,25 +10723,21 @@ nsIPrincipal* nsDocShell::GetInheritedPrincipal(
     channel->SetLoadFlags(loadFlags | nsIChannel::LOAD_REPLACE);
   }
 
+  // Navigational requests that are same origin need to be upgraded in case
+  // upgrade-insecure-requests is present. Please note that for document
+  // navigations that bit is re-computed in case we encounter a server
+  // side redirect so the navigation is not same-origin anymore.
+  // The upgrade check is triggered by either:
+  // 1. UpgradeInsecureNavigationRequested flag (set by
+  // BrowsingContext::Navigate)
+  // 2. CSP from PolicyContainer has upgrade-insecure-requests (fallback path)
   nsCOMPtr<nsIPolicyContainer> policyContainer = aLoadState->PolicyContainer();
-  if (nsCOMPtr<nsIContentSecurityPolicy> csp =
-          PolicyContainer::GetCSP(policyContainer)) {
-    // Navigational requests that are same origin need to be upgraded in case
-    // upgrade-insecure-requests is present. Please note that for document
-    // navigations that bit is re-computed in case we encounter a server
-    // side redirect so the navigation is not same-origin anymore.
-    bool upgradeInsecureRequests = false;
-    csp->GetUpgradeInsecureRequests(&upgradeInsecureRequests);
-    if (upgradeInsecureRequests) {
-      // only upgrade if the navigation is same origin
-      nsCOMPtr<nsIPrincipal> resultPrincipal;
-      aRv = nsContentUtils::GetSecurityManager()->GetChannelResultPrincipal(
-          channel, getter_AddRefs(resultPrincipal));
-      NS_ENSURE_SUCCESS(aRv, false);
-      if (nsContentSecurityUtils::IsConsideredSameOriginForUIR(
-              aLoadState->TriggeringPrincipal(), resultPrincipal)) {
-        aLoadInfo->SetUpgradeInsecureRequests(true);
-      }
+  nsCOMPtr<nsIContentSecurityPolicy> csp =
+      PolicyContainer::GetCSP(policyContainer);
+  if (aLoadState->UpgradeInsecureNavigationRequested() || csp) {
+    if (!MaybeSetUpgradeInsecureRequestsOnChannel(
+            aBrowsingContext, aLoadState, aLoadInfo, channel, csp, aRv)) {
+      return false;
     }
   }
 

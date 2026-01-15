@@ -3849,11 +3849,28 @@ void Document::ApplySettingsFromCSP(bool aSpeculative) {
 
       // Set up 'upgrade-insecure-requests' if not already inherited
       // from the parent context or set by any other CSP.
-      if (!mUpgradeInsecureRequests) {
-        bool upgrade = false;
-        rv = csp->GetUpgradeInsecureRequests(&upgrade);
-        NS_ENSURE_SUCCESS_VOID(rv);
-        mUpgradeInsecureRequests = upgrade;
+      bool cspHasUIR = false;
+      rv = csp->GetUpgradeInsecureRequests(&cspHasUIR);
+      NS_ENSURE_SUCCESS_VOID(rv);
+
+      if (cspHasUIR) {
+        mUpgradeInsecureRequests = true;
+
+        // Per spec Section 3.1 steps 3-4, when upgrade-insecure-requests is
+        // enforced, add (host, port) to the browsing context's upgrade
+        // insecure navigations set. This happens for EVERY document that has
+        // UIR in its CSP, regardless of whether UIR was also inherited.
+        // https://w3c.github.io/webappsec-upgrade-insecure-requests/#delivery
+        if (BrowsingContext* bc = GetBrowsingContext()) {
+          if (nsIURI* docURI = GetDocumentURI()) {
+            nsAutoCString host;
+            int32_t port = -1;
+            if (NS_SUCCEEDED(docURI->GetHost(host)) &&
+                NS_SUCCEEDED(docURI->GetPort(&port))) {
+              bc->AddUpgradeInsecureNavigationEntry(host, port);
+            }
+          }
+        }
       }
       if (!mUpgradeInsecurePreloads) {
         mUpgradeInsecurePreloads = mUpgradeInsecureRequests;

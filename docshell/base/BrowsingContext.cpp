@@ -32,6 +32,8 @@
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/DocumentPictureInPicture.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/PolicyContainer.h"
+#include "nsContentSecurityUtils.h"
 #include "mozilla/dom/Geolocation.h"
 #include "mozilla/dom/HTMLEmbedElement.h"
 #include "mozilla/dom/HTMLIFrameElement.h"
@@ -79,6 +81,7 @@
 
 #include "nsDocShell.h"
 #include "nsDocShellLoadState.h"
+#include "nsHttp.h"
 #include "nsFocusManager.h"
 #include "nsGlobalWindowInner.h"
 #include "nsGlobalWindowOuter.h"
@@ -559,6 +562,32 @@ already_AddRefed<BrowsingContext> BrowsingContext::CreateIndependent(
   bc->mEmbeddedByThisProcess = true;
   bc->EnsureAttached();
   return bc.forget();
+}
+
+void BrowsingContext::AddUpgradeInsecureNavigationEntry(const nsACString& aHost,
+                                                        int32_t aPort) {
+  UpgradeInsecureNavigationEntry entry;
+  entry.mHost = aHost;
+  entry.mPort = aPort;
+  if (!mUpgradeInsecureNavigationsSet.Contains(entry)) {
+    mUpgradeInsecureNavigationsSet.AppendElement(entry);
+  }
+}
+
+bool BrowsingContext::IsInUpgradeInsecureNavigationsSet(const nsACString& aHost,
+                                                        int32_t aPort) const {
+  UpgradeInsecureNavigationEntry entry;
+  entry.mHost = aHost;
+  entry.mPort = aPort;
+
+  // Walk up the parent chain checking each BC's set.
+  // Per spec Section 3.3, nested browsing contexts inherit from ancestors.
+  for (const BrowsingContext* bc = this; bc; bc = bc->GetParent()) {
+    if (bc->mUpgradeInsecureNavigationsSet.Contains(entry)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void BrowsingContext::EnsureAttached() {
@@ -2430,6 +2459,45 @@ BrowsingContext::CheckURLAndCreateLoadState(nsIURI* aURI,
   return loadState.forget();
 }
 
+// For top-level HTTP navigations, check if upgrade-insecure-requests should
+// apply based on CSP and (host, port) matching.
+//
+// Per spec Section 3.2.1, check if the navigation URL's (host, port) is in the
+// upgrade insecure navigations set. The set is populated when documents with
+// upgrade-insecure-requests CSP load, and is inherited down the BC tree.
+// https://w3c.github.io/webappsec-upgrade-insecure-requests/#upgrade-insecure-navigations-set
+static void MaybeHandleUpgradeInsecureRequestsForNavigation(
+    BrowsingContext* aBrowsingContext, nsIURI* aURI, Document* aSourceDocument,
+    nsDocShellLoadState* aLoadState) {
+  if (!aBrowsingContext->IsTopContent() || !aURI || !aURI->SchemeIs("http")) {
+    return;
+  }
+
+  nsAutoCString navHost;
+  int32_t navPort = -1;
+  if (NS_FAILED(aURI->GetHost(navHost)) || NS_FAILED(aURI->GetPort(&navPort))) {
+    return;
+  }
+
+  // Check if the navigation URL is in the upgrade insecure navigations set.
+  // Check both the target BC's set and the source BC's set (which inherits
+  // from ancestors including the target when source is an iframe).
+  bool inTargetSet =
+      aBrowsingContext->IsInUpgradeInsecureNavigationsSet(navHost, navPort);
+  BrowsingContext* sourceBC =
+      aSourceDocument ? aSourceDocument->GetBrowsingContext() : nullptr;
+  bool inSourceSet =
+      sourceBC && sourceBC->IsInUpgradeInsecureNavigationsSet(navHost, navPort);
+
+  if (inTargetSet || inSourceSet) {
+    aLoadState->SetUpgradeInsecureNavigationRequested(true);
+  } else if (aSourceDocument &&
+             aSourceDocument->GetUpgradeInsecureRequests(false)) {
+    // Source has UIR but the navigation URL isn't in the set - skip upgrade.
+    aLoadState->SetShouldSkipUpgradeInsecureRequests(true);
+  }
+}
+
 // https://html.spec.whatwg.org/#navigate
 // In its current state, this method is not closely following the spec.
 // https://bugzil.la/1974717 tracks the work to align this method with the spec.
@@ -2492,6 +2560,9 @@ void BrowsingContext::Navigate(
   loadState->SetFirstParty(true);
   loadState->SetNavigationAPIState(aNavigationAPIState);
   loadState->SetNavigationAPIMethodTracker(aNavigationAPIMethodTracker);
+
+  MaybeHandleUpgradeInsecureRequestsForNavigation(this, aURI, aSourceDocument,
+                                                  loadState);
 
   rv = LoadURI(loadState);
   if (NS_WARN_IF(NS_FAILED(rv))) {

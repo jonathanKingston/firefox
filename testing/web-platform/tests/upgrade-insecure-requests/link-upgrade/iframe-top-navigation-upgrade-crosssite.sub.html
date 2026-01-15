@@ -1,0 +1,21 @@
+<html>
+  <head>
+    <title>Upgrade Insecure Requests: top-frame navigation inside cross-site iframe (upgrade expected)</title>
+  </head>
+  <body>
+    <!--
+    This is a bit of a hack. UPGRADE doesn't upgrade the port number, so we
+    specify this non-existent URL ('http' over https port). If UPGRADE doesn't
+    work, it won't load. The expected behavior is that the url is upgraded and
+    the page loads.
+
+    This test verifies that a cross-site iframe (different eTLD+1) correctly
+    inherits the upgrade-insecure-navigations set from its embedding document's
+    browsing context, per spec Section 3.3.
+    -->
+    <iframe
+      sandbox="allow-scripts allow-top-navigation"
+      src="https://{{hosts[alt][]}}:{{ports[https][0]}}/upgrade-insecure-requests/link-upgrade/resources/navigate-top-frame.sub.html?url=http://{{host}}:{{ports[https][0]}}/upgrade-insecure-requests/link-upgrade/resources/post-message-to-opener.sub.html%3Fmessage=iframe-top-navigation-upgrade-crosssite"
+    ></iframe>
+  </body>
+</html>

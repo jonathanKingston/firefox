@@ -220,6 +220,8 @@ struct DocShellLoadStateInit
   bool NotifiedBeforeUnloadListeners;
   bool ForceAllowDataURI;
   bool IsExemptFromHTTPSFirstMode;
+  bool ShouldSkipUpgradeInsecureRequests;
+  bool UpgradeInsecureNavigationRequested;
   bool OriginalFrameSrc;
   bool ShouldCheckForRecursion;
   bool IsFormSubmission;

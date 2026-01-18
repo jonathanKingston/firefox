@@ -49,6 +49,7 @@
 #include "nsIDocShell.h"
 #include "nsIHttpChannel.h"
 #include "nsIInputStream.h"
+#include "nsILoadInfo.h"
 #include "nsINestedURI.h"
 #include "nsIObserverService.h"
 #include "nsIRequest.h"
@@ -1071,12 +1072,29 @@ nsresult nsHtml5StreamParser::OnStartRequest(nsIRequest* aRequest) {
   // load would have scripts enabled.
   bool scriptingEnabled =
       mMode == LOAD_AS_DATA ? false : mExecutor->IsScriptEnabled();
+
+  // Check if this is an MHTML document. For MHTML, we force scriptingEnabled
+  // to true so that both <script> and <noscript> content is treated as raw
+  // text and not rendered. Script execution is still blocked by sandbox flags.
+  bool isMhtml = false;
+  nsCOMPtr<nsIChannel> channel;
+  nsresult rv = GetChannel(getter_AddRefs(channel));
+  if (NS_SUCCEEDED(rv)) {
+    nsCOMPtr<nsILoadInfo> loadInfo = channel->LoadInfo();
+    if (loadInfo) {
+      nsAutoCString archiveId;
+      if (NS_SUCCEEDED(loadInfo->GetMhtmlArchiveId(archiveId)) &&
+          !archiveId.IsEmpty()) {
+        isMhtml = true;
+        scriptingEnabled = true;
+      }
+    }
+  }
+
   mOwner->StartTokenizer(scriptingEnabled);
 
   MOZ_ASSERT(!mDecodingLocalFileWithoutTokenizing);
   bool isSrcdoc = false;
-  nsCOMPtr<nsIChannel> channel;
-  nsresult rv = GetChannel(getter_AddRefs(channel));
   if (NS_SUCCEEDED(rv)) {
     isSrcdoc = NS_IsSrcdocChannel(channel);
     if (!isSrcdoc && mCharsetSource <= kCharsetFromFallback) {
@@ -1123,8 +1141,10 @@ nsresult nsHtml5StreamParser::OnStartRequest(nsIRequest* aRequest) {
   }
   mTreeBuilder->setIsSrcdocDocument(isSrcdoc);
   mTreeBuilder->setScriptingEnabled(scriptingEnabled);
+  // Prevent script execution unless in NORMAL mode with scripting enabled,
+  // and always prevent for MHTML documents.
   mTreeBuilder->SetPreventScriptExecution(
-      !((mMode == NORMAL) && scriptingEnabled));
+      !((mMode == NORMAL) && scriptingEnabled) || isMhtml);
   mTreeBuilder->setAllowDeclarativeShadowRoots(
       mExecutor->GetDocument()->AllowsDeclarativeShadowRoots());
   mTokenizer->start();

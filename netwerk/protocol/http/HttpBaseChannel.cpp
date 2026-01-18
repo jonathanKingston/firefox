@@ -47,6 +47,7 @@
 #include "mozilla/dom/Performance.h"
 #include "mozilla/dom/PerformanceStorage.h"
 #include "mozilla/dom/PolicyContainer.h"
+#include "mozilla/dom/MHTMLArchiveStore.h"
 #include "mozilla/dom/ProcessIsolation.h"
 #include "mozilla/dom/RequestBinding.h"
 #include "mozilla/dom/WindowGlobalParent.h"
@@ -4426,6 +4427,33 @@ bool HttpBaseChannel::ShouldIntercept(nsIURI* aURI) {
   nsCOMPtr<nsINetworkInterceptController> controller;
   GetCallback(controller);
   bool shouldIntercept = false;
+
+  // Check for MHTML interception first - this takes priority over ServiceWorker
+  if (mLoadInfo) {
+    nsAutoCString archiveId;
+    if (NS_SUCCEEDED(mLoadInfo->GetMhtmlArchiveId(archiveId)) &&
+        !archiveId.IsEmpty()) {
+      nsAutoCString scheme;
+      nsIURI* uri = aURI ? aURI : mURI.get();
+      if (uri) {
+        uri->GetScheme(scheme);
+      }
+      if (scheme.EqualsLiteral("http") || scheme.EqualsLiteral("https")) {
+        // Check if archive exists in the store
+        if (mozilla::dom::MHTMLArchiveStoreService::HasArchive(archiveId)) {
+          nsAutoCString spec;
+          if (uri) {
+            uri->GetSpec(spec);
+          }
+          printf_stderr(
+              "HttpBaseChannel::ShouldIntercept: MHTML intercepting uri=%s "
+              "archiveId=%s\n",
+              spec.get(), archiveId.get());
+          return true;
+        }
+      }
+    }
+  }
 
   if (!StaticPrefs::dom_serviceWorkers_enabled()) {
     return false;

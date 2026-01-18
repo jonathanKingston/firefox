@@ -1,0 +1,61 @@
+/* -*- Mode: IDL; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+#include "nsISupports.idl"
+
+/**
+ * Service for storing MHTML archives in the parent process.
+ * Used by JSProcessActor to store archive data, and by C++ interceptors to
+ * retrieve resources.
+ */
+[scriptable, builtinclass, uuid(c1d2e3f4-a5b6-7890-cdef-123456789abc)]
+interface nsIMHTMLArchiveStore : nsISupports
+{
+  /**
+   * Register a resource in an archive.
+   */
+  void addResource(in ACString aArchiveId,
+                   in ACString aContentLocation,
+                   in ACString aContentID,
+                   in ACString aContentType,
+                   in Array<uint8_t> aData);
+
+  /**
+   * Mark archive registration as complete.
+   */
+  void finalizeArchive(in ACString aArchiveId);
+
+  /**
+   * Unregister an archive.
+   */
+  void unregisterArchive(in ACString aArchiveId);
+
+  /**
+   * Look up a resource by URL (Content-Location).
+   * @returns true if found
+   */
+  boolean getResource(in ACString aArchiveId,
+                      in ACString aURL,
+                      out ACString aContentType,
+                      out Array<uint8_t> aData);
+
+  /**
+   * Look up a resource by Content-ID (for cid: URLs).
+   */
+  boolean getResourceByCID(in ACString aArchiveId,
+                           in ACString aCID,
+                           out ACString aContentType,
+                           out Array<uint8_t> aData);
+
+  /**
+   * Check if an archive exists.
+   */
+  boolean hasArchive(in ACString aArchiveId);
+
+  /**
+   * Register a mapping from URI to archiveId for Document initialization.
+   */
+  void registerURIToArchiveId(in ACString aURI, in ACString aArchiveId);
+};

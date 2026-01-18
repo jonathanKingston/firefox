@@ -611,6 +611,7 @@ nsresult LoadInfoToLoadInfoArgs(nsILoadInfo* aLoadInfo,
       aLoadInfo->GetIsMetaRefresh(), aLoadInfo->GetLoadingEmbedderPolicy(),
       aLoadInfo->GetIsOriginTrialCoepCredentiallessEnabledForTopLevel(),
       unstrippedURI, interceptionInfoArg, aLoadInfo->GetIsNewWindowTarget(),
+      static_cast<LoadInfo*>(aLoadInfo)->GetMhtmlArchiveIdForIPC(),
       aLoadInfo->GetUserNavigationInvolvement(),
       aLoadInfo->GetContainerFeaturePolicyInfo(), {});
 
@@ -897,6 +898,11 @@ nsresult LoadInfoArgsToLoadInfo(const LoadInfoArgs& loadInfoArgs,
       /* aIsSameDocumentNavigation */ false, overriddenFingerprintingSettings,
       loadingContext, loadInfoArgs.unstrippedURI(), interceptionInfo,
       loadInfoArgs.schemelessInput(), loadInfoArgs.userNavigationInvolvement());
+
+  // Set MHTML archive ID if present
+  if (!loadInfoArgs.mhtmlArchiveId().IsEmpty()) {
+    loadInfo->SetMhtmlArchiveId(loadInfoArgs.mhtmlArchiveId());
+  }
 
   loadInfo.forget(outLoadInfo);
   return NS_OK;

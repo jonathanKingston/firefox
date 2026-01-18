@@ -539,6 +539,10 @@ fn eval_moz_is_resource_document(context: &Context) -> bool {
     unsafe { bindings::Gecko_MediaFeatures_IsResourceDocument(context.device().document()) }
 }
 
+fn eval_moz_mhtml_document(context: &Context) -> bool {
+    unsafe { bindings::Gecko_MediaFeatures_IsMHTMLDocument(context.device().document()) }
+}
+
 /// Allows front-end CSS to discern platform via media queries.
 #[derive(Clone, Copy, Debug, FromPrimitive, Parse, ToCss)]
 #[repr(u8)]
@@ -660,7 +664,7 @@ macro_rules! lnf_int_feature {
 /// to support new types in these entries and (2) ensuring that either
 /// nsPresContext::MediaFeatureValuesChanged is called when the value that
 /// would be returned by the evaluator function could change.
-pub static MEDIA_FEATURES: [QueryFeatureDescription; 60] = [
+pub static MEDIA_FEATURES: [QueryFeatureDescription; 61] = [
     feature!(
         atom!("width"),
         AllowsRanges::Yes,
@@ -905,6 +909,12 @@ pub static MEDIA_FEATURES: [QueryFeatureDescription; 60] = [
         atom!("-moz-is-resource-document"),
         AllowsRanges::No,
         Evaluator::BoolInteger(eval_moz_is_resource_document),
+        FeatureFlags::CHROME_AND_UA_ONLY,
+    ),
+    feature!(
+        atom!("-moz-mhtml-document"),
+        AllowsRanges::No,
+        Evaluator::BoolInteger(eval_moz_mhtml_document),
         FeatureFlags::CHROME_AND_UA_ONLY,
     ),
     feature!(

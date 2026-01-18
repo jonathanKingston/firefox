@@ -1,0 +1,80 @@
+/* -*- Mode: IDL; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+#include "nsISupports.idl"
+
+/**
+ * Interface for MHTML archive storage.
+ * Stores resources from an MHTML file for serving subresources.
+ */
+[scriptable, builtinclass, uuid(a1b2c3d4-e5f6-7890-abcd-ef1234567890)]
+interface nsIMHTMLArchive : nsISupports
+{
+  /**
+   * Add a resource to the archive.
+   *
+   * @param aContentLocation Content-Location URL (may be empty)
+   * @param aContentID Content-ID (may be empty, without angle brackets)
+   * @param aContentType MIME type of the resource
+   * @param aData Resource data as array of bytes
+   */
+  void addResource(in ACString aContentLocation,
+                   in ACString aContentID,
+                   in ACString aContentType,
+                   in Array<uint8_t> aData);
+
+  /**
+   * Set the main HTML document content.
+   *
+   * @param aData HTML content as bytes
+   * @param aContentType Content type (typically text/html)
+   */
+  void setMainHTML(in Array<uint8_t> aData, in ACString aContentType);
+
+  /**
+   * Check if archive has a resource for given URL.
+   */
+  boolean hasResource(in ACString aURL);
+
+  /**
+   * Check if archive has a resource for given Content-ID.
+   */
+  boolean hasResourceByCID(in ACString aCID);
+};
+
+/**
+ * Interface for global MHTML archive registry.
+ * Manages archives by UUID, allowing lookup from C++ intercept controllers.
+ */
+[scriptable, builtinclass, uuid(b2c3d4e5-f6a7-8901-bcde-f23456789012)]
+interface nsIMHTMLArchiveRegistry : nsISupports
+{
+  /**
+   * Register an archive and get back a unique ID.
+   *
+   * @param aArchive The archive to register
+   * @param aInnerWindowId Optional inner window ID for cleanup
+   * @return Unique archive ID (UUID string)
+   */
+  ACString register(in nsIMHTMLArchive aArchive,
+                    [optional] in unsigned long long aInnerWindowId);
+
+  /**
+   * Unregister an archive by ID.
+   */
+  void unregister(in ACString aId);
+
+  /**
+   * Unregister all archives for a given window.
+   */
+  void unregisterForWindow(in unsigned long long aInnerWindowId);
+
+  /**
+   * Associate an archive with a window ID for cleanup.
+   * Called after document creation when we have the inner window ID.
+   */
+  void setWindowIdForArchive(in ACString aArchiveId,
+                             in unsigned long long aInnerWindowId);
+};

@@ -1715,4 +1715,11 @@ interface nsILoadInfo : nsISupports
       return static_cast<mozilla::dom::UserNavigationInvolvement>(userNavigationInvolvement);
     }
 %}
+
+  /**
+   * MHTML archive identifier. If non-empty, this load originates from
+   * an MHTML document. Subresource loads inherit this value and should
+   * be served from the registered archive or blocked.
+   */
+  attribute ACString mhtmlArchiveId;
 };

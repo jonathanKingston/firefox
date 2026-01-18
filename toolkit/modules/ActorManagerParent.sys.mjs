@@ -49,6 +49,15 @@ let JSPROCESSACTORS = {
     },
   },
 
+  MHTMLArchive: {
+    parent: {
+      esModuleURI: "resource://gre/modules/MHTMLArchiveParent.sys.mjs",
+    },
+    child: {
+      esModuleURI: "resource://gre/modules/MHTMLArchiveChild.sys.mjs",
+    },
+  },
+
   // A single process (shared with translations) that manages machine learning engines.
   MLEngine: {
     remoteTypes: ["inference"],

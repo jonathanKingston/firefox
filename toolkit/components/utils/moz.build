@@ -8,6 +8,9 @@ with Files("**"):
     BUG_COMPONENT = ("Toolkit", "General")
 
 EXTRA_JS_MODULES += [
+    "MHTMLDocumentLoader.sys.mjs",
+    "MHTMLParser.sys.mjs",
+    "MHTMLStartup.sys.mjs",
     "SimpleServices.sys.mjs",
 ]
 

@@ -19,6 +19,7 @@ EXPORTS.mozilla.dom += [
     "FramingChecker.h",
     "IntegrityPolicy.h",
     "IntegrityPolicyService.h",
+    "MHTMLInterceptController.h",
     "nsContentSecurityManager.h",
     "nsContentSecurityUtils.h",
     "nsCSPContext.h",
@@ -51,6 +52,7 @@ UNIFIED_SOURCES += [
     "FramingChecker.cpp",
     "IntegrityPolicy.cpp",
     "IntegrityPolicyService.cpp",
+    "MHTMLInterceptController.cpp",
     "nsContentSecurityManager.cpp",
     "nsContentSecurityUtils.cpp",
     "nsCSPContext.cpp",
@@ -74,6 +76,8 @@ FINAL_LIBRARY = "xul"
 LOCAL_INCLUDES += [
     "/caps",
     "/docshell/base",  # for nsDocShell.h
+    "/dom/base",
+    "/dom/ipc",  # for MHTMLArchiveStore.h
     "/netwerk/base",
     "/netwerk/protocol/data",  # for nsDataHandler.h
     "/netwerk/protocol/http",  # for HttpBaseChannel.h

@@ -103,6 +103,12 @@ bool Gecko_MediaFeatures_IsResourceDocument(const Document* aDocument) {
   return aDocument->IsResourceDoc();
 }
 
+bool Gecko_MediaFeatures_IsMHTMLDocument(const Document* aDocument) {
+  nsAutoCString archiveId;
+  aDocument->GetMHTMLArchiveId(archiveId);
+  return !archiveId.IsEmpty();
+}
+
 bool Gecko_MediaFeatures_InAndroidPipMode(const Document* aDocument) {
   return aDocument->InAndroidPipMode();
 }

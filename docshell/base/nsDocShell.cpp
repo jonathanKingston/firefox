@@ -76,6 +76,10 @@
 #include "mozilla/dom/PopupBlocker.h"
 #include "mozilla/dom/ScreenOrientation.h"
 #include "mozilla/dom/ScriptSettings.h"
+#include "mozilla/dom/MHTMLArchive.h"
+#include "mozilla/dom/MHTMLArchiveRegistryService.h"
+#include "mozilla/dom/MHTMLArchiveStore.h"
+#include "mozilla/dom/MHTMLInterceptController.h"
 #include "mozilla/dom/ServiceWorkerInterceptController.h"
 #include "mozilla/dom/ServiceWorkerUtils.h"
 #include "mozilla/dom/SessionHistoryEntry.h"
@@ -14543,12 +14547,54 @@ void nsDocShell::MaybeNotifyKeywordSearchLoading(const nsString& aProvider,
 NS_IMETHODIMP
 nsDocShell::ShouldPrepareForIntercept(nsIURI* aURI, nsIChannel* aChannel,
                                       bool* aShouldIntercept) {
+  *aShouldIntercept = false;
+
+  // Check for MHTML interception first
+  nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
+  if (loadInfo) {
+    nsAutoCString archiveId;
+    if (NS_SUCCEEDED(loadInfo->GetMhtmlArchiveId(archiveId)) &&
+        !archiveId.IsEmpty()) {
+      nsAutoCString scheme;
+      aURI->GetScheme(scheme);
+      nsAutoCString spec;
+      aURI->GetSpec(spec);
+      printf_stderr("MHTML intercept check: scheme=%s archiveId=%s uri=%s\n",
+                    scheme.get(), archiveId.get(), spec.get());
+      if (scheme.EqualsLiteral("http") || scheme.EqualsLiteral("https")) {
+        // Verify archive still exists before committing to intercept
+        bool hasArchive = dom::MHTMLArchiveStoreService::HasArchive(archiveId);
+        printf_stderr("MHTML HasArchive(%s) = %d\n", archiveId.get(),
+                      hasArchive);
+        if (hasArchive) {
+          *aShouldIntercept = true;
+          return NS_OK;
+        }
+        // Archive gone - fall through to normal handling
+      }
+    }
+  }
+
   return mInterceptController->ShouldPrepareForIntercept(aURI, aChannel,
                                                          aShouldIntercept);
 }
 
 NS_IMETHODIMP
 nsDocShell::ChannelIntercepted(nsIInterceptedChannel* aChannel) {
+  // Check for MHTML interception first
+  nsCOMPtr<nsIChannel> inner;
+  nsresult rv = aChannel->GetChannel(getter_AddRefs(inner));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsILoadInfo> loadInfo = inner->LoadInfo();
+  nsAutoCString archiveId;
+  if (loadInfo && NS_SUCCEEDED(loadInfo->GetMhtmlArchiveId(archiveId)) &&
+      !archiveId.IsEmpty()) {
+    RefPtr<dom::MHTMLInterceptController> mhtmlController =
+        new dom::MHTMLInterceptController();
+    return mhtmlController->ChannelIntercepted(aChannel);
+  }
+
   return mInterceptController->ChannelIntercepted(aChannel);
 }
 

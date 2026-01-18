@@ -550,6 +550,12 @@ class LoadInfo final : public nsILoadInfo {
       dom::UserNavigationInvolvement::None;
 
   bool mSkipHTTPSUpgrade = false;
+
+  nsCString mMhtmlArchiveId;
+
+ public:
+  // Non-interface method for IPC serialization
+  const nsCString& GetMhtmlArchiveIdForIPC() const { return mMhtmlArchiveId; }
 };
 // This is exposed solely for testing purposes and should not be used outside of
 // LoadInfo

@@ -558,6 +558,17 @@ TRRLoadInfo::SetSkipHTTPSUpgrade(bool aSkipHTTPSUpgrade) {
 }
 
 NS_IMETHODIMP
+TRRLoadInfo::GetMhtmlArchiveId(nsACString& aMhtmlArchiveId) {
+  aMhtmlArchiveId.Truncate();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+TRRLoadInfo::SetMhtmlArchiveId(const nsACString& aMhtmlArchiveId) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
 TRRLoadInfo::GetFetchDestination(nsACString& aDestination) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }

@@ -4147,6 +4147,11 @@ class Document : public nsINode,
    */
   DocumentL10n* GetL10n() const { return mDocumentL10n.get(); }
 
+  void GetMHTMLArchiveId(nsACString& aResult) const {
+    aResult = mMHTMLArchiveId;
+  }
+  void SetMHTMLArchiveId(const nsACString& aId) { mMHTMLArchiveId = aId; }
+
   /**
    * Whether there's any async l10n mutation work pending.
    *
@@ -5334,6 +5339,7 @@ class Document : public nsINode,
 
  private:
   nsCString mContentType;
+  nsCString mMHTMLArchiveId;
 
   nsTArray<nsString> mAncestorOriginsList;
 

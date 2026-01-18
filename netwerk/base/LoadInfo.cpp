@@ -282,6 +282,9 @@ LoadInfo::LoadInfo(
     // setting of parent IP address space if not availble.
 
     mInnerWindowID = aLoadingContext->OwnerDoc()->InnerWindowID();
+
+    // Propagate MHTML archive ID from the loading document to subresource loads
+    aLoadingContext->OwnerDoc()->GetMHTMLArchiveId(mMhtmlArchiveId);
     RefPtr<WindowContext> ctx = WindowContext::GetById(mInnerWindowID);
     if (ctx) {
       mLoadingEmbedderPolicy = ctx->GetEmbedderPolicy();
@@ -2069,6 +2072,18 @@ LoadInfo::GetSkipHTTPSUpgrade(bool* aSkipHTTPSUpgrade) {
 NS_IMETHODIMP
 LoadInfo::SetSkipHTTPSUpgrade(bool aSkipHTTPSUpgrade) {
   mSkipHTTPSUpgrade = aSkipHTTPSUpgrade;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+LoadInfo::GetMhtmlArchiveId(nsACString& aMhtmlArchiveId) {
+  aMhtmlArchiveId = mMhtmlArchiveId;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+LoadInfo::SetMhtmlArchiveId(const nsACString& aMhtmlArchiveId) {
+  mMhtmlArchiveId = aMhtmlArchiveId;
   return NS_OK;
 }
 

@@ -16,6 +16,7 @@ XPIDL_SOURCES += [
     "nsIDOMProcessParent.idl",
     "nsIHangReport.idl",
     "nsILoginDetectionService.idl",
+    "nsIMHTMLArchiveStore.idl",
 ]
 
 XPIDL_MODULE = "dom"
@@ -70,6 +71,7 @@ EXPORTS.mozilla.dom += [
     "LoginDetectionService.h",
     "MaybeDiscarded.h",
     "MemoryReportRequest.h",
+    "MHTMLArchiveStore.h",
     "NativeThreadId.h",
     "NavigationAPIIPCUtils.h",
     "PageLoadEventUtils.h",
@@ -135,6 +137,7 @@ UNIFIED_SOURCES += [
     "LoginDetectionService.cpp",
     "MemMapSnapshot.cpp",
     "MemoryReportRequest.cpp",
+    "MHTMLArchiveStore.cpp",
     "MMPrinter.cpp",
     "PermissionMessageUtils.cpp",
     "PolicyContainerMessageUtils.cpp",

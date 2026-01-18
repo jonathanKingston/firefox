@@ -375,6 +375,7 @@
 #include "nsIInputStreamChannel.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsILayoutHistoryState.h"
+#include "nsIMHTMLArchive.h"
 #include "nsIMultiPartChannel.h"
 #include "nsIMutationObserver.h"
 #include "nsINSSErrorsService.h"
@@ -2451,6 +2452,15 @@ Document::~Document() {
 
   NS_ASSERTION(!mIsShowing, "Destroying a currently-showing document");
 
+  // Clean up MHTML archive registration
+  if (!mMHTMLArchiveId.IsEmpty()) {
+    nsCOMPtr<nsIMHTMLArchiveRegistry> registry =
+        do_GetService("@mozilla.org/dom/mhtml-archive-registry;1");
+    if (registry) {
+      registry->Unregister(mMHTMLArchiveId);
+    }
+  }
+
   if (IsTopLevelContentDocument()) {
     RemoveToplevelLoadingDocument(this);
   }
@@ -3654,6 +3664,16 @@ nsresult Document::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
 
     // Store the security info for future use.
     mChannel->GetSecurityInfo(getter_AddRefs(mSecurityInfo));
+
+    // Copy MHTML archive ID from loadInfo if present
+    nsCOMPtr<nsILoadInfo> loadInfo = mChannel->LoadInfo();
+    if (loadInfo) {
+      nsAutoCString archiveId;
+      if (NS_SUCCEEDED(loadInfo->GetMhtmlArchiveId(archiveId)) &&
+          !archiveId.IsEmpty()) {
+        SetMHTMLArchiveId(archiveId);
+      }
+    }
   }
 
   // If this document is being loaded by a docshell, copy its sandbox flags
@@ -3671,6 +3691,19 @@ nsresult Document::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
 
   if (docShell && !loadInfo->GetLoadErrorPage()) {
     mSandboxFlags = loadInfo->GetSandboxFlags();
+
+    // For MHTML documents, add security sandbox flags
+    if (!mMHTMLArchiveId.IsEmpty()) {
+      mSandboxFlags |=
+          SANDBOXED_SCRIPTS |       // No script execution
+          SANDBOXED_MODALS |        // No alert/confirm/prompt
+          SANDBOXED_POINTER_LOCK |  // No pointer lock
+          SANDBOXED_ORIENTATION_LOCK |
+          SANDBOXED_FORMS |                // Prevent form submission
+          SANDBOXED_TOPLEVEL_NAVIGATION |  // Prevent top-level navigation
+          SANDBOXED_TOPLEVEL_NAVIGATION_USER_ACTIVATION;
+    }
+
     WarnIfSandboxIneffective(docShell, mSandboxFlags, GetChannel());
   }
 

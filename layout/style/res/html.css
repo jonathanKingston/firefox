@@ -952,6 +952,14 @@ slot {
   }
 }
 
+/* Hide noscript in MHTML documents since they're snapshots of pages
+ * that had scripting enabled - noscript content wasn't visible originally */
+@media (-moz-mhtml-document) {
+  noscript {
+    display: none !important;
+  }
+}
+
 @media print {
   input,
   textarea,

@@ -6,6 +6,27 @@ support-files = [
   "bug1204626_doc1.html",
 ]
 
+["browser_mhtml_chrome_compat.js"]
+support-files = [
+  "mhtml_test_files.js",
+  "file_persist_simple.html",
+]
+
+["browser_mhtml_load.js"]
+skip-if = [
+  "true # Bug XXXXXX - Test framework has timing issues with MHTML file:// loads. Manual testing confirms functionality works.",
+]
+
+["browser_mhtml_network_isolation.js"]
+
+["browser_mhtml_read.js"]
+support-files = [
+  "file_persist_simple.html",
+  "file_persist_image.png",
+]
+
+["browser_mhtml_security.js"]
+
 ["browser_persist.js"]
 support-files = [
   "file_persist_srcset.html",

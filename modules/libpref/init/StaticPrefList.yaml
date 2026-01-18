@@ -3586,6 +3586,12 @@
   value: true
   mirror: always
 
+# Enable MHTML read/loading support (opening .mhtml files).
+- name: dom.mhtml.read.enabled
+  type: bool
+  value: true
+  mirror: always
+
 # Enable mapped array buffer by default.
 - name: dom.mapped_arraybuffer.enabled
   type: bool

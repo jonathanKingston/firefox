@@ -6,11 +6,14 @@
 #include "nsWebBrowserPersist.h"
 
 #include <algorithm>
+#include <cstring>
 
 #include "ReferrerInfo.h"
 #include "WebBrowserPersistLocalDocument.h"
+#include "mozilla/Logging.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/Printf.h"
+#include "mozilla/SpinEventLoopUntil.h"
 #include "mozilla/TextUtils.h"
 #include "mozilla/WebBrowserPersistDocumentParent.h"
 #include "mozilla/dom/BrowserParent.h"
@@ -48,10 +51,15 @@
 #include "nsIURL.h"
 #include "nsIUploadChannel.h"
 #include "nsIWebProgressListener.h"
+#include "nsMHTMLPersist.h"
 #include "nsNetCID.h"
 #include "nsNetUtil.h"
 #include "nsStreamUtils.h"
+#include "nsThreadUtils.h"
 #include "nspr.h"
+
+static mozilla::LazyLogModule gMHTMLLog("MHTML");
+#define MHTML_LOG(args) MOZ_LOG(gMHTMLLog, mozilla::LogLevel::Debug, args)
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -148,6 +156,15 @@ struct nsWebBrowserPersist::CleanupData {
   // it transmutes into something else later on it can be ignored. For example,
   // catch files that turn into dirs or vice versa.
   bool mIsDirectory;
+};
+
+struct nsWebBrowserPersist::MHTMLResourceData {
+  nsCOMPtr<nsIURI> mURI;
+  nsCString mContentType;
+  nsTArray<uint8_t> mData;
+
+  explicit MHTMLResourceData(nsIURI* aURI, const nsACString& aContentType)
+      : mURI(aURI), mContentType(aContentType) {}
 };
 
 class nsWebBrowserPersist::OnWalk final
@@ -556,7 +573,6 @@ nsresult nsWebBrowserPersist::StartUpload(nsIInputStream* aInputStream,
 void nsWebBrowserPersist::SerializeNextFile() {
   nsresult rv = NS_OK;
   MOZ_ASSERT(mWalkStack.Length() == 0);
-
   // First, handle gathered URIs.
   // This is potentially O(n^2), when taking into account the
   // number of times this method is called.  If it becomes a
@@ -565,6 +581,8 @@ void nsWebBrowserPersist::SerializeNextFile() {
 
   // Persist each file in the uri map. The document(s)
   // will be saved after the last one of these is saved.
+  // For MHTML, resources will be collected via OnDataAvailable instead of
+  // written to files.
   for (const auto& entry : mURIMap) {
     URIData* data = entry.GetWeak();
 
@@ -639,6 +657,17 @@ void nsWebBrowserPersist::SerializeNextFile() {
 
   // There are no URIs to save, so just save the next document.
   mStartSaving = true;
+
+  if (IsSavingAsMHTML()) {
+    nsresult rv = SerializeAsMHTML();
+    if (NS_FAILED(rv)) {
+      EndDownload(rv);
+    } else {
+      FinishDownload();
+    }
+    return;
+  }
+
   mozilla::UniquePtr<DocData> docData(mDocList.ElementAt(0));
   mDocList.RemoveElementAt(0);  // O(n^2) but probably doesn't matter.
   MOZ_ASSERT(docData);
@@ -751,6 +780,8 @@ nsWebBrowserPersist::OnWrite::OnFinish(nsIWebBrowserPersistDocument* aDoc,
 //*****************************************************************************
 
 NS_IMETHODIMP nsWebBrowserPersist::OnStartRequest(nsIRequest* request) {
+  nsCOMPtr<nsIChannel> channel = do_QueryInterface(request);
+
   if (mProgressListener) {
     uint32_t stateFlags = nsIWebProgressListener::STATE_START |
                           nsIWebProgressListener::STATE_IS_REQUEST;
@@ -760,7 +791,6 @@ NS_IMETHODIMP nsWebBrowserPersist::OnStartRequest(nsIRequest* request) {
     mProgressListener->OnStateChange(nullptr, request, stateFlags, NS_OK);
   }
 
-  nsCOMPtr<nsIChannel> channel = do_QueryInterface(request);
   NS_ENSURE_TRUE(channel, NS_ERROR_FAILURE);
 
   nsCOMPtr<nsISupports> keyPtr = do_QueryInterface(request);
@@ -939,6 +969,14 @@ nsWebBrowserPersist::OnDataAvailable(nsIRequest* request,
                                      nsIInputStream* aIStream, uint64_t aOffset,
                                      uint32_t aLength) {
   // MOZ_ASSERT(!NS_IsMainThread()); // no guarantees, but it's likely.
+
+  if (IsSavingAsMHTML()) {
+    nsresult rv = CollectMHTMLResource(request, aIStream, aOffset, aLength);
+    if (NS_FAILED(rv)) {
+      mCancel = true;
+    }
+    return rv;
+  }
 
   bool cancel = mCancel;
   if (!cancel) {
@@ -1474,6 +1512,7 @@ nsresult nsWebBrowserPersist::SaveChannelInternal(nsIChannel* aChannel,
   mOutputMap.InsertOrUpdate(keyPtr,
                             MakeUnique<OutputData>(aFile, mURI, aCalcFileExt));
 
+  // For MHTML, we add to mOutputMap but don't create file stream
   return NS_OK;
 }
 
@@ -1749,7 +1788,8 @@ void nsWebBrowserPersist::FinishSaveDocumentInternal(nsIURI* aFile,
                                                      nsIFile* aDataPath) {
   // If there are things to persist, create a directory to hold them
   if (mCurrentThingsToPersist > 0) {
-    if (aDataPath) {
+    if (aDataPath && !IsSavingAsMHTML()) {
+      // For MHTML, we don't create a _files folder since everything is embedded
       bool exists = false;
       bool haveDir = false;
 
@@ -2389,6 +2429,7 @@ nsresult nsWebBrowserPersist::StoreURI(nsIURI* aURI,
                                        nsContentPolicyType aContentPolicyType,
                                        bool aNeedsPersisting, URIData** aData) {
   NS_ENSURE_ARG_POINTER(aURI);
+
   if (aData) {
     *aData = nullptr;
   }
@@ -2689,4 +2730,206 @@ void nsWebBrowserPersist::SetApplyConversionIfNeeded(nsIChannel* aChannel) {
       if (NS_SUCCEEDED(rv)) encChannel->SetApplyConversion(applyConversion);
     }
   }
+}
+
+nsresult nsWebBrowserPersist::CollectMHTMLResource(nsIRequest* aRequest,
+                                                   nsIInputStream* aStream,
+                                                   uint64_t aOffset,
+                                                   uint32_t aCount) {
+  nsCOMPtr<nsIChannel> channel = do_QueryInterface(aRequest);
+  NS_ENSURE_TRUE(channel, NS_ERROR_FAILURE);
+
+  nsCOMPtr<nsISupports> keyPtr = do_QueryInterface(aRequest);
+  MHTMLResourceData* data = mMHTMLResources.Get(keyPtr);
+
+  if (!data) {
+    nsCOMPtr<nsIURI> uri;
+    channel->GetURI(getter_AddRefs(uri));
+    nsAutoCString contentType;
+    channel->GetContentType(contentType);
+
+    auto newData = MakeUnique<MHTMLResourceData>(uri, contentType);
+    data = newData.get();
+    mMHTMLResources.InsertOrUpdate(keyPtr, std::move(newData));
+  }
+
+  uint32_t totalRead = 0;
+  while (totalRead < aCount) {
+    char buffer[8192];
+    uint32_t bytesRead = 0;
+    nsresult rv = aStream->Read(
+        buffer, std::min(uint32_t(sizeof(buffer)), aCount - totalRead),
+        &bytesRead);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (bytesRead == 0) {
+      break;
+    }
+
+    data->mData.AppendElements(reinterpret_cast<const uint8_t*>(buffer),
+                               bytesRead);
+    totalRead += bytesRead;
+  }
+
+  return NS_OK;
+}
+
+class MHTMLSyncWriteCompletion final
+    : public nsIWebBrowserPersistWriteCompletion {
+ public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIWEBBROWSERPERSISTWRITECOMPLETION
+
+  MHTMLSyncWriteCompletion() : mFinished(false), mStatus(NS_OK) {}
+
+  bool mFinished;
+  nsresult mStatus;
+
+ private:
+  ~MHTMLSyncWriteCompletion() = default;
+};
+
+NS_IMPL_ISUPPORTS(MHTMLSyncWriteCompletion, nsIWebBrowserPersistWriteCompletion)
+
+NS_IMETHODIMP
+MHTMLSyncWriteCompletion::OnFinish(nsIWebBrowserPersistDocument* aDocument,
+                                   nsIOutputStream* aStream,
+                                   const nsACString& aContentType,
+                                   nsresult aStatus) {
+  mStatus = aStatus;
+  mFinished = true;
+  return NS_OK;
+}
+
+nsresult nsWebBrowserPersist::SerializeAsMHTML() {
+  if (!IsSavingAsMHTML()) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  if (mDocList.IsEmpty()) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  DocData* mainDoc = mDocList[0];
+
+  nsCOMPtr<nsIOutputStream> outputStream;
+  nsresult rv = MakeOutputStream(mainDoc->mFile, getter_AddRefs(outputStream));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  mMHTMLPersist = MakeUnique<MHTMLPersist>();
+  rv = mMHTMLPersist->StartMHTMLArchive(outputStream, mainDoc->mBaseURI,
+                                        mainDoc->mCharset);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Pre-generate Content-IDs for all resources so we can rewrite URLs to cid:
+  for (const auto& entry : mMHTMLResources) {
+    MHTMLResourceData* resData = entry.GetWeak();
+    if (resData && resData->mURI) {
+      nsAutoCString spec;
+      resData->mURI->GetSpec(spec);
+      nsCString cid = mMHTMLPersist->GenerateContentID();
+      mMHTMLPersist->RegisterURLToCID(spec, cid);
+    }
+  }
+
+  // Also pre-generate CIDs for resources in mURIMap
+  for (const auto& uriEntry : mURIMap) {
+    nsCString cid = mMHTMLPersist->GenerateContentID();
+    mMHTMLPersist->RegisterURLToCID(uriEntry.GetKey(), cid);
+  }
+
+  // Build URL to CID map for document serialization
+  nsTHashMap<nsCStringHashKey, nsCString> urlToCidMap;
+  mMHTMLPersist->GetURLToCIDMap(urlToCidMap);
+
+  for (DocData* docData : mDocList) {
+    nsCOMPtr<nsIStorageStream> storageStream;
+    rv = NS_NewStorageStream(4096, UINT32_MAX, getter_AddRefs(storageStream));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCOMPtr<nsIOutputStream> docStream;
+    rv = storageStream->GetOutputStream(0, getter_AddRefs(docStream));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // Build a FlatURIMap that maps original URLs to cid: URLs
+    RefPtr<FlatURIMap> flatMap = new FlatURIMap(""_ns);
+    for (const auto& uriEntry : mURIMap) {
+      if (nsCString* cid =
+              urlToCidMap.Lookup(uriEntry.GetKey()).DataPtrOrNull()) {
+        nsCString cidURL = "cid:"_ns + *cid;
+        flatMap->Add(uriEntry.GetKey(), cidURL);
+      }
+    }
+    // Also add mappings for resources in mMHTMLResources
+    for (const auto& entry : mMHTMLResources) {
+      MHTMLResourceData* resData = entry.GetWeak();
+      if (resData && resData->mURI) {
+        nsAutoCString spec;
+        resData->mURI->GetSpec(spec);
+        if (nsCString* cid = urlToCidMap.Lookup(spec).DataPtrOrNull()) {
+          nsCString cidURL = "cid:"_ns + *cid;
+          flatMap->Add(spec, cidURL);
+        }
+      }
+    }
+
+    RefPtr<MHTMLSyncWriteCompletion> completion =
+        new MHTMLSyncWriteCompletion();
+
+    uint32_t encodingFlags =
+        mEncodingFlags | nsIWebBrowserPersist::ENCODE_FLAGS_DROP_NOSCRIPT;
+    rv = docData->mDocument->WriteContent(
+        docStream, flatMap, NS_ConvertUTF16toUTF8(mContentType), encodingFlags,
+        mWrapColumn, completion);
+
+    SpinEventLoopUntil("nsWebBrowserPersist::SerializeAsMHTML"_ns,
+                       [&]() { return completion->mFinished; });
+
+    if (NS_FAILED(completion->mStatus)) {
+      SendErrorStatusChange(false, completion->mStatus, nullptr,
+                            docData->mFile);
+      EndDownload(completion->mStatus);
+      return completion->mStatus;
+    }
+
+    nsCOMPtr<nsIInputStream> docInputStream;
+    rv = storageStream->NewInputStream(0, getter_AddRefs(docInputStream));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCString docContent;
+    rv = NS_ConsumeStream(docInputStream, UINT32_MAX, docContent);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsAutoCString docURI;
+    docData->mDocument->GetDocumentURI(docURI);
+
+    nsCOMPtr<nsIURI> uri;
+    rv = NS_NewURI(getter_AddRefs(uri), docURI);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = mMHTMLPersist->AddDocument("text/html"_ns, docData->mCharset,
+                                    docContent, uri);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  for (const auto& entry : mMHTMLResources) {
+    MHTMLResourceData* resData = entry.GetWeak();
+    if (resData && !resData->mData.IsEmpty()) {
+      rv = mMHTMLPersist->AddResource(resData->mURI, resData->mContentType,
+                                      resData->mData.Elements(),
+                                      resData->mData.Length());
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+  }
+
+  rv = mMHTMLPersist->FinishMHTMLArchive();
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = outputStream->Flush();
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = outputStream->Close();
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return NS_OK;
 }

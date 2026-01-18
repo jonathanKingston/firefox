@@ -199,10 +199,12 @@ DownloadListener.prototype = {
   },
 };
 
-const kSaveAsType_Complete = 0; // Save document with attached objects.
+const kSaveAsType_Complete = 0; // Save document with attached objects (filter index 0).
 XPCOMUtils.defineConstant(this, "kSaveAsType_Complete", 0);
-// const kSaveAsType_URL      = 1; // Save document or URL by itself.
-const kSaveAsType_Text = 2; // Save document, converting to plain text.
+// const kSaveAsType_URL      = 1; // Save document or URL by itself (filter index 1).
+const kSaveAsType_MHTML = 2; // Save as MHTML (single file, multipart) (filter index 2).
+XPCOMUtils.defineConstant(this, "kSaveAsType_MHTML", kSaveAsType_MHTML);
+const kSaveAsType_Text = 3; // Save document, converting to plain text (varies by filter order).
 XPCOMUtils.defineConstant(this, "kSaveAsType_Text", kSaveAsType_Text);
 
 /**
@@ -365,13 +367,18 @@ function internalSave(
 
   function continueSave() {
     // XXX We depend on the following holding true in appendFiltersForContentType():
-    // If we should save as a complete page, the saveAsType is kSaveAsType_Complete.
-    // If we should save as text, the saveAsType is kSaveAsType_Text.
+    // Filter index 0 = kSaveAsType_Complete (Web Page, complete)
+    // Filter index 1 = HTML only
+    // Filter index 2 = kSaveAsType_MHTML (Web Page, MHTML single file) - only if dom.mhtml.write.enabled
+    // Filter index 2 or 3+ = kSaveAsType_Text (Text files) or All files
+    // Note: When dom.mhtml.write.enabled is false, saveAsType is adjusted in promiseTargetFile()
     var useSaveDocument =
       aDocument &&
       ((saveMode & SAVEMODE_COMPLETE_DOM &&
-        saveAsType == kSaveAsType_Complete) ||
-        (saveMode & SAVEMODE_COMPLETE_TEXT && saveAsType == kSaveAsType_Text));
+        (saveAsType == kSaveAsType_Complete ||
+          saveAsType == 1 || // HTML only
+          saveAsType == kSaveAsType_MHTML)) ||
+        (saveMode & SAVEMODE_COMPLETE_TEXT && saveAsType >= kSaveAsType_Text));
     // If we're saving a document, and are saving either in complete mode or
     // as converted text, pass the document to the web browser persist component.
     // If we're just saving the HTML (second option in the list), send only the URI.
@@ -411,6 +418,7 @@ function internalSave(
       cookieJarSettings: aCookieJarSettings,
       isPrivate,
       saveCompleteCallback: aSaveCompleteCallback,
+      saveAsType,
     };
 
     // Start the actual save process
@@ -471,6 +479,11 @@ function internalPersist(persistArgs) {
 
   // Leave it to WebBrowserPersist to discover the encoding type (or lack thereof):
   persist.persistFlags |= nsIWBP.PERSIST_FLAGS_AUTODETECT_APPLY_CONVERSION;
+
+  // Enable MHTML if user selected MHTML format in save dialog
+  if (persistArgs.saveAsType == kSaveAsType_MHTML) {
+    persist.persistFlags |= nsIWBP.PERSIST_FLAGS_SAVE_AS_MHTML;
+  }
 
   // Find the URI associated with the target file
   var targetFileURL = makeFileURI(persistArgs.targetFile);
@@ -732,7 +745,7 @@ function promiseTargetFile(
     fp.displayDirectory = dir;
     fp.defaultExtension = aFpP.fileInfo.fileExt;
     fp.defaultString = aFpP.fileInfo.fileName;
-    appendFiltersForContentType(
+    let saveTypeMap = appendFiltersForContentType(
       fp,
       aFpP.contentType,
       aFpP.fileInfo.fileExt,
@@ -764,9 +777,28 @@ function promiseTargetFile(
     // Do not store the last save directory as a pref inside the private browsing mode
     downloadLastDir.setFile(aRelatedURI, fp.file.parent);
 
-    aFpP.saveAsType = fp.filterIndex;
+    // Use the filter type map if available for robust index-to-type mapping
+    if (saveTypeMap && fp.filterIndex < saveTypeMap.length) {
+      aFpP.saveAsType = saveTypeMap[fp.filterIndex];
+    } else {
+      // Fallback for cases without the map (e.g., SAVEMODE_FILEONLY)
+      aFpP.saveAsType = fp.filterIndex;
+    }
     aFpP.file = fp.file;
     aFpP.file.leafName = validateFileName(aFpP.file.leafName);
+
+    // Change extension to .mhtml if MHTML format was selected
+    if (aFpP.saveAsType == kSaveAsType_MHTML) {
+      let leafName = aFpP.file.leafName;
+      // Replace .html/.htm extension with .mhtml
+      if (leafName.match(/\.(html?|xhtml?)$/i)) {
+        leafName = leafName.replace(/\.(html?|xhtml?)$/i, ".mhtml");
+      } else if (!leafName.endsWith(".mhtml") && !leafName.endsWith(".mht")) {
+        // If no extension or different extension, append .mhtml
+        leafName += ".mhtml";
+      }
+      aFpP.file.leafName = leafName;
+    }
 
     return true;
   })();
@@ -937,25 +969,45 @@ function appendFiltersForContentType(
     }
   }
 
+  // Build a mapping of filter indices to save types for later decoding.
+  // This is stored on the file picker object to avoid fragile index arithmetic.
+  let filterTypeMap = [];
+
   if (aSaveMode & SAVEMODE_COMPLETE_DOM) {
+    // Filter index 0: Web Page, complete
     aFilePicker.appendFilter(
       ContentAreaUtils.stringBundle.GetStringFromName("WebPageCompleteFilter"),
       filterString
     );
-    // We should always offer a choice to save document only if
-    // we allow saving as complete.
+    filterTypeMap.push(kSaveAsType_Complete);
+
+    // Filter index 1: Web Page, HTML only
     aFilePicker.appendFilter(
       ContentAreaUtils.stringBundle.GetStringFromName(bundleName),
       filterString
     );
+    filterTypeMap.push(1); // kSaveAsType_HTMLOnly (implicit constant)
+
+    // Filter index 2: Web Page, MHTML (single file)
+    if (Services.prefs.getBoolPref("dom.mhtml.write.enabled", true)) {
+      aFilePicker.appendFilter(
+        ContentAreaUtils.stringBundle.GetStringFromName("WebPageMHTMLFilter"),
+        "*.mhtml; *.mht"
+      );
+      filterTypeMap.push(kSaveAsType_MHTML);
+    }
   }
 
   if (aSaveMode & SAVEMODE_COMPLETE_TEXT) {
     aFilePicker.appendFilters(Ci.nsIFilePicker.filterText);
+    filterTypeMap.push(kSaveAsType_Text);
   }
 
   // Always append the all files (*) filter
   aFilePicker.appendFilters(Ci.nsIFilePicker.filterAll);
+  filterTypeMap.push(kSaveAsType_Complete); // "All files" defaults to complete
+
+  return filterTypeMap;
 }
 
 function getPostData(aDocument) {

@@ -269,6 +269,11 @@ class nsDocumentEncoder : public nsIDocumentEncoder {
    */
   static bool IsInvisibleNodeAndShouldBeSkipped(const nsINode& aNode,
                                                 const uint32_t aFlags) {
+    if ((aFlags & OutputDropNoScriptElements) &&
+        aNode.IsHTMLElement(nsGkAtoms::noscript)) {
+      return true;
+    }
+
     if (aFlags & SkipInvisibleContent) {
       // Treat the visibility of the ShadowRoot as if it were
       // the host content.

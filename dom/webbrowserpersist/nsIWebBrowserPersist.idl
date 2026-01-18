@@ -70,6 +70,12 @@ interface nsIWebBrowserPersist : nsICancelable
   const unsigned long PERSIST_FLAGS_APPEND_TO_FILE = 32768;
   /** Unconditionally disable HTTPS-Only and HTTPS-First upgrades */
   const unsigned long PERSIST_FLAGS_DISABLE_HTTPS_ONLY = 65536;
+  /**
+   * Save as MHTML (single file, multipart/related format).
+   * This causes the entire document and all resources to be saved in a single
+   * file using the MHTML (RFC 2557) format.
+   */
+  const unsigned long PERSIST_FLAGS_SAVE_AS_MHTML = 131072;
 
   /**
    * Flags governing how data is fetched and saved from the network.
@@ -208,6 +214,11 @@ interface nsIWebBrowserPersist : nsICancelable
    * with older products that don't support &alpha; and friends.
    */
   const unsigned long ENCODE_FLAGS_ENCODE_BASIC_ENTITIES = 8192;
+
+  /**
+   * Drop noscript elements and their contents from the output.
+   */
+  const unsigned long ENCODE_FLAGS_DROP_NOSCRIPT = 16384;
 
   /**
    * Save the specified DOM document to file and optionally all linked files

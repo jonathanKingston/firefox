@@ -1,0 +1,18 @@
+# MHTML Rendering Reftests
+# These tests validate that MHTML files render identically to their HTML counterparts
+
+# Basic HTML structure rendering
+== mhtml-basic-rendering.html mhtml-basic-ref.html
+
+# Complex layout with CSS
+== mhtml-complex-layout.html mhtml-complex-layout-ref.html
+
+# Images and embedded resources
+== mhtml-with-images.html mhtml-with-images-ref.html
+
+# Fonts and typography
+== mhtml-fonts.html mhtml-fonts-ref.html
+
+# Note: The .mhtml files are generated programmatically from the test HTML
+# See browser_mhtml_reftest_generator.js for the automation
+

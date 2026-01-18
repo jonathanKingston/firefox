@@ -203,6 +203,12 @@ interface nsIDocumentEncoder : nsISupports
   const unsigned long OutputIgnoreMozDirty = (1 << 22);
 
   /**
+   * Drop noscript elements from the output. This removes the noscript
+   * element and all its contents.
+   */
+  const unsigned long OutputDropNoScriptElements = (1 << 23);
+
+  /**
    * Serialize in a way that is suitable for copying a plaintext version of the
    * document to the clipboard.  This can for example cause line endings to be
    * injected at preformatted block element boundaries.

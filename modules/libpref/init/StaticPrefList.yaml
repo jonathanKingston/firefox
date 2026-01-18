@@ -3592,6 +3592,12 @@
   value: true
   mirror: always
 
+# Enable MHTML write/export support (saving pages as .mhtml).
+- name: dom.mhtml.write.enabled
+  type: bool
+  value: true
+  mirror: always
+
 # Enable mapped array buffer by default.
 - name: dom.mapped_arraybuffer.enabled
   type: bool

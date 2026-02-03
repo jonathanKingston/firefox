@@ -1,0 +1,11 @@
+<body>
+  <form id="form" target="_top" action="{{GET[url]}}" method="GET">
+    <input type="hidden" name="message" value="{{GET[message]}}">
+  </form>
+</body>
+
+<script>
+  window.addEventListener("load", function() {
+    document.getElementById("form").submit();
+  });
+</script>

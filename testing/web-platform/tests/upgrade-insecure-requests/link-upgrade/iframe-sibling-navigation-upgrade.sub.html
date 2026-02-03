@@ -1,0 +1,32 @@
+<html>
+  <head>
+    <title>Upgrade Insecure Requests: sibling iframe navigation (upgrade expected)</title>
+  </head>
+  <body>
+    <!--
+    Tests that when iframe-A navigates iframe-B to an HTTP URL, the navigation
+    is upgraded if the URL's origin is in the upgrade insecure navigations set
+    inherited from the parent document.
+
+    Per spec Section 3.3, the upgrade insecure navigations set is inherited by
+    nested browsing contexts. When iframe-A initiates a navigation of iframe-B,
+    if the target URL matches an origin in iframe-A's inherited set, the
+    navigation should be upgraded.
+
+    This is a bit of a hack. UPGRADE doesn't upgrade the port number, so we
+    specify this non-existent URL ('http' over https port). If UPGRADE doesn't
+    work, it won't load. The expected behavior is that the url is upgraded and
+    the page loads.
+    -->
+    <iframe
+      id="target-frame"
+      sandbox="allow-scripts"
+      src="about:blank"
+    ></iframe>
+    <iframe
+      id="source-frame"
+      sandbox="allow-scripts"
+      src="https://{{domains[www]}}:{{ports[https][0]}}/upgrade-insecure-requests/link-upgrade/resources/navigate-sibling-frame.sub.html?target=target-frame&amp;url=http://{{host}}:{{ports[https][0]}}/upgrade-insecure-requests/link-upgrade/resources/post-message-to-opener.sub.html%3Fmessage=iframe-sibling-navigation-upgrade"
+    ></iframe>
+  </body>
+</html>

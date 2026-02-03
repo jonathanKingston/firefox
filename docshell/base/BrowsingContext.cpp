@@ -657,9 +657,24 @@ mozilla::ipc::IPCResult BrowsingContext::CreateFromIPC(
   context->mRequestContextId = aInit.mRequestContextId;
   // NOTE: Private browsing ID is set by `SetOriginAttributes`.
 
-  // Restore the upgrade insecure origin from the initializer (inherited).
-  context->mUpgradeInsecureOriginHost = aInit.mUpgradeInsecureOriginHost;
-  context->mUpgradeInsecureOriginPort = aInit.mUpgradeInsecureOriginPort;
+  // Per spec Section 3.3, when a nested browsing context is created, it
+  // inherits the upgrade insecure navigations set from its embedding document.
+  // If the initializer has UIR origin set, use it. Otherwise, inherit from
+  // the parent BC (if it has UIR origin set).
+  // https://w3c.github.io/webappsec-upgrade-insecure-requests/#nesting
+  if (!aInit.mUpgradeInsecureOriginHost.IsEmpty()) {
+    context->mUpgradeInsecureOriginHost = aInit.mUpgradeInsecureOriginHost;
+    context->mUpgradeInsecureOriginPort = aInit.mUpgradeInsecureOriginPort;
+  } else if (BrowsingContext* parentBC = context->GetParent()) {
+    // Walk up parent chain to find inherited UIR origin
+    for (const BrowsingContext* bc = parentBC; bc; bc = bc->GetParent()) {
+      if (!bc->mUpgradeInsecureOriginHost.IsEmpty()) {
+        context->mUpgradeInsecureOriginHost = bc->mUpgradeInsecureOriginHost;
+        context->mUpgradeInsecureOriginPort = bc->mUpgradeInsecureOriginPort;
+        break;
+      }
+    }
+  }
 
   if (const char* failure =
           context->BrowsingContextCoherencyChecks(aOriginProcess)) {
@@ -2469,20 +2484,34 @@ BrowsingContext::CheckURLAndCreateLoadState(nsIURI* aURI,
   return loadState.forget();
 }
 
-// For top-level HTTP navigations, check if upgrade-insecure-requests should
-// apply based on CSP and (host, port) matching.
+// Check if upgrade-insecure-requests should apply to this navigation.
 //
-// Per spec Section 3.2.1, check if the navigation URL's (host, port) matches
-// the inherited UIR origin. The origin is set when a document with
-// upgrade-insecure-requests CSP loads, and is inherited down the BC tree.
-// https://w3c.github.io/webappsec-upgrade-insecure-requests/#upgrade-insecure-navigations-set
+// Per spec Section 4.1:
+// - Step 3.2: For nested BC targets, skip (host, port) check and upgrade if
+//   source has UIR policy.
+// - Step 3.3-3.4: For top-level targets, check if URL's (host, port) is in
+//   the client's upgrade insecure navigations set.
+// https://w3c.github.io/webappsec-upgrade-insecure-requests/#upgrade-request
 static void MaybeHandleUpgradeInsecureRequestsForNavigation(
     BrowsingContext* aBrowsingContext, nsIURI* aURI, Document* aSourceDocument,
     nsDocShellLoadState* aLoadState) {
-  if (!aBrowsingContext->IsTopContent() || !aURI || !aURI->SchemeIs("http")) {
+  if (!aURI || !aURI->SchemeIs("http")) {
     return;
   }
 
+  BrowsingContext* sourceBC =
+      aSourceDocument ? aSourceDocument->GetBrowsingContext() : nullptr;
+
+  // For nested browsing context targets, per spec step 3.2, upgrade if the
+  // source document has UIR policy (skip the (host, port) check).
+  if (!aBrowsingContext->IsTopContent()) {
+    if (sourceBC && sourceBC->HasUpgradeInsecureOrigin()) {
+      aLoadState->SetUpgradeInsecureNavigationRequested(true);
+    }
+    return;
+  }
+
+  // For top-level targets, check if URL's (host, port) matches the set.
   nsAutoCString navHost;
   int32_t navPort = -1;
   if (NS_FAILED(aURI->GetHost(navHost)) || NS_FAILED(aURI->GetPort(&navPort))) {
@@ -2494,8 +2523,6 @@ static void MaybeHandleUpgradeInsecureRequestsForNavigation(
   // ancestors including the target when source is an iframe).
   bool shouldUpgradeFromTarget =
       aBrowsingContext->ShouldUpgradeInsecureNavigation(navHost, navPort);
-  BrowsingContext* sourceBC =
-      aSourceDocument ? aSourceDocument->GetBrowsingContext() : nullptr;
   bool shouldUpgradeFromSource =
       sourceBC && sourceBC->ShouldUpgradeInsecureNavigation(navHost, navPort);
 
@@ -3078,8 +3105,23 @@ BrowsingContext::IPCInitializer BrowsingContext::GetIPCInitializer() {
     init.mSessionHistoryCount = mChildSessionHistory->Count();
   }
   init.mRequestContextId = mRequestContextId;
-  init.mUpgradeInsecureOriginHost = mUpgradeInsecureOriginHost;
-  init.mUpgradeInsecureOriginPort = mUpgradeInsecureOriginPort;
+
+  // Include the UIR origin in the initializer. If this BC doesn't have one
+  // set directly, walk up the parent chain to find inherited values.
+  // This ensures cross-process child BCs inherit correctly.
+  if (!mUpgradeInsecureOriginHost.IsEmpty()) {
+    init.mUpgradeInsecureOriginHost = mUpgradeInsecureOriginHost;
+    init.mUpgradeInsecureOriginPort = mUpgradeInsecureOriginPort;
+  } else {
+    for (const BrowsingContext* bc = GetParent(); bc; bc = bc->GetParent()) {
+      if (!bc->mUpgradeInsecureOriginHost.IsEmpty()) {
+        init.mUpgradeInsecureOriginHost = bc->mUpgradeInsecureOriginHost;
+        init.mUpgradeInsecureOriginPort = bc->mUpgradeInsecureOriginPort;
+        break;
+      }
+    }
+  }
+
   init.mFields = mFields.RawValues();
   return init;
 }

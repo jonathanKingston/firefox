@@ -10376,7 +10376,8 @@ static bool IsUpgradeInsecureRequestsPortCompatible(nsIURI* aHttpURI,
   }
 
   bool httpIsStandard = (httpPort == -1 || httpPort == NS_HTTP_DEFAULT_PORT);
-  bool httpsIsStandard = (httpsPort == -1 || httpsPort == NS_HTTPS_DEFAULT_PORT);
+  bool httpsIsStandard =
+      (httpsPort == -1 || httpsPort == NS_HTTPS_DEFAULT_PORT);
 
   return (httpIsStandard && httpsIsStandard) || (httpPort == httpsPort);
 }
@@ -10420,6 +10421,50 @@ static bool MaybeSetUpgradeInsecureRequestsOnChannel(
   if (aCsp) {
     aCsp->GetUpgradeInsecureRequests(&upgradeRequested);
   }
+
+  // Path 3: For navigations that bypass BrowsingContext::Navigate (like link
+  // clicks with target="_top" or sibling frame navigations), check the source
+  // BC's upgrade insecure navigations set directly.
+  //
+  // Per spec Section 4.1:
+  // - Step 3.2: For nested BC targets, skip (host,port) check and upgrade if
+  //   source has UIR policy
+  // - Step 3.3-3.4: For top-level targets, check if URL's (host, port) is in
+  //   the client's set
+  bool isNestedTarget = aLoadInfo->GetExternalContentPolicyType() ==
+                            ExtContentPolicy::TYPE_SUBDOCUMENT ||
+                        (aBrowsingContext && !aBrowsingContext->IsTopContent());
+
+  if (aLoadState->URI() && aLoadState->URI()->SchemeIs("http")) {
+    RefPtr<BrowsingContext> sourceBC =
+        aLoadState->SourceBrowsingContext().get();
+    if (sourceBC) {
+      if (isNestedTarget) {
+        // Per spec step 3.2: nested targets upgrade if source has UIR policy
+        if (sourceBC->HasUpgradeInsecureOrigin()) {
+          aLoadInfo->SetUpgradeInsecureRequests(true);
+          return true;
+        }
+      } else if (isTopLevelDocument) {
+        // Per spec step 3.3-3.4: top-level targets check (host, port) match
+        nsAutoCString navHost;
+        int32_t navPort = -1;
+        if (NS_SUCCEEDED(aLoadState->URI()->GetHost(navHost)) &&
+            NS_SUCCEEDED(aLoadState->URI()->GetPort(&navPort))) {
+          if (sourceBC->ShouldUpgradeInsecureNavigation(navHost, navPort)) {
+            aLoadInfo->SetUpgradeInsecureRequests(true);
+            return true;
+          }
+          // Per spec step 3.5: source has UIR but URL doesn't match - don't
+          // upgrade this top-level navigation. Skip CSP-based upgrade path.
+          if (sourceBC->HasUpgradeInsecureOrigin()) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+
   if (!upgradeRequested) {
     return true;
   }

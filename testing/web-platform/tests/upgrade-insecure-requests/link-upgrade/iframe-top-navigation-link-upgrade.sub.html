@@ -1,0 +1,21 @@
+<html>
+  <head>
+    <title>Upgrade Insecure Requests: link click to top-frame (upgrade expected)</title>
+  </head>
+  <body>
+    <!--
+    Tests that a link click with target="_top" from an iframe is upgraded when
+    the parent document has upgrade-insecure-requests CSP and the link URL
+    matches the parent's origin (which is in the upgrade insecure navigations set).
+
+    This is a bit of a hack. UPGRADE doesn't upgrade the port number, so we
+    specify this non-existent URL ('http' over https port). If UPGRADE doesn't
+    work, it won't load. The expected behavior is that the url is upgraded and
+    the page loads.
+    -->
+    <iframe
+      sandbox="allow-scripts allow-top-navigation"
+      src="https://{{domains[www]}}:{{ports[https][0]}}/upgrade-insecure-requests/link-upgrade/resources/click-link-to-top.sub.html?url=http://{{host}}:{{ports[https][0]}}/upgrade-insecure-requests/link-upgrade/resources/post-message-to-opener.sub.html%3Fmessage=iframe-top-navigation-link-upgrade"
+    ></iframe>
+  </body>
+</html>

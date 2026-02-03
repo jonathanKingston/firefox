@@ -1,0 +1,20 @@
+<html>
+  <head>
+    <title>Upgrade Insecure Requests: form submit to top-frame (no upgrade expected)</title>
+  </head>
+  <body>
+    <!--
+    Tests that a form submission with target="_top" from an iframe is NOT upgraded
+    when the form action URL does not match any origin in the upgrade insecure
+    navigations set.
+
+    This is a bit of a hack. UPGRADE doesn't upgrade the port number. So if the
+    url is upgraded, the url becomes invalid (https over the http port). The
+    expected behavior is that the url is not upgraded and the page loads.
+    -->
+    <iframe
+      sandbox="allow-scripts allow-top-navigation allow-forms"
+      src="https://{{domains[www]}}:{{ports[https][0]}}/upgrade-insecure-requests/link-upgrade/resources/form-submit-to-top.sub.html?message=iframe-top-navigation-form-no-upgrade&amp;url=http://{{domains[www]}}:{{ports[http][1]}}/upgrade-insecure-requests/link-upgrade/resources/post-message-to-opener-from-param.sub.html"
+    ></iframe>
+  </body>
+</html>

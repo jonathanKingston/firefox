@@ -1,0 +1,7 @@
+<script>
+  var params = new URLSearchParams(window.location.search);
+  var message = params.get("message");
+  if (message) {
+    top.opener.postMessage(message, "*");
+  }
+</script>

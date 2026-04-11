@@ -77,6 +77,85 @@ async function readMHTML(file) {
   return IOUtils.readUTF8(file.path);
 }
 
+function parseMHTMLHeaders(headerText) {
+  let headers = new Map();
+  let currentHeader = null;
+
+  for (let line of headerText.split("\r\n")) {
+    if (!line) {
+      continue;
+    }
+
+    if (/^[ \t]/.test(line) && currentHeader) {
+      headers.set(currentHeader, headers.get(currentHeader) + line.trim());
+      continue;
+    }
+
+    let separator = line.indexOf(":");
+    if (separator === -1) {
+      continue;
+    }
+
+    currentHeader = line.slice(0, separator).trim().toLowerCase();
+    headers.set(currentHeader, line.slice(separator + 1).trim());
+  }
+
+  return headers;
+}
+
+function decodeMHTMLBody(body, transferEncoding) {
+  if (transferEncoding !== "base64") {
+    return body;
+  }
+
+  let normalized = body.replace(/\s+/g, "");
+  let binary = atob(normalized);
+  let bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
+function parseMHTML(content) {
+  let boundaryMatch = content.match(/boundary="([^"]+)"/);
+  ok(boundaryMatch, "MHTML should contain a boundary");
+  let boundary = boundaryMatch?.[1];
+
+  let rawParts = content.split("--" + boundary);
+  let parts = [];
+
+  for (let rawPart of rawParts.slice(1)) {
+    if (!rawPart || rawPart.startsWith("--")) {
+      continue;
+    }
+
+    let part = rawPart.startsWith("\r\n") ? rawPart.slice(2) : rawPart;
+    let splitAt = part.indexOf("\r\n\r\n");
+    if (splitAt === -1) {
+      continue;
+    }
+
+    let headerText = part.slice(0, splitAt);
+    let body = part.slice(splitAt + 4).replace(/\r\n$/, "");
+    let headers = parseMHTMLHeaders(headerText);
+    let transferEncoding =
+      headers.get("content-transfer-encoding")?.toLowerCase() ?? "";
+    let decodedBody = decodeMHTMLBody(body, transferEncoding);
+
+    parts.push({
+      headers,
+      body,
+      decodedBody,
+    });
+  }
+
+  return { boundary, parts };
+}
+
+function findPartByContentLocation(parts, locationSubstring) {
+  return parts.find(part =>
+    (part.headers.get("content-location") || "").includes(locationSubstring)
+  );
+}
+
 add_task(async function test_mhtml_basic() {
   info("Testing basic MHTML save functionality");
 
@@ -87,6 +166,7 @@ add_task(async function test_mhtml_basic() {
   Assert.greater(mhtmlFile.fileSize, 0, "MHTML file should not be empty");
 
   let content = await readMHTML(mhtmlFile);
+  let { parts } = parseMHTML(content);
 
   // Check top-level MHTML envelope headers.
   ok(content.includes("MIME-Version: 1.0"), "Should have MIME-Version header");
@@ -118,6 +198,7 @@ add_task(async function test_mhtml_basic() {
   // Check HTML content.
   ok(content.includes("text/html"), "Should contain HTML content");
   ok(content.includes("MHTML Test Page"), "Should contain page title");
+  ok(parts.length >= 2, "Should include HTML and at least one resource part");
 
   // Check scripts are stripped.
   ok(!content.includes("<script"), "Should not contain script tags");
@@ -196,4 +277,80 @@ add_task(async function test_mhtml_no_files_folder() {
 
   ok(!tmpDir.exists(), "_files folder should not exist for MHTML saves");
   ok(mhtmlFile.exists(), "MHTML file should exist");
+});
+
+add_task(async function test_mhtml_unicode_decoding() {
+  info("Testing UTF-8 content decoding from MHTML parts");
+
+  let uri = contentBase + "file_persist_unicode.html";
+  let mhtmlFile = await saveAsMHTML("unicode_test", uri);
+  let content = await readMHTML(mhtmlFile);
+  let { parts } = parseMHTML(content);
+
+  ok(
+    parts.some(part => part.decodedBody.includes("Unicode ✓ café 🚀")),
+    "Decoded MHTML content should preserve UTF-8 characters"
+  );
+});
+
+add_task(async function test_mhtml_iframe_content_preserved() {
+  info("Testing iframe and subframe content preservation");
+
+  let uri = contentBase + "file_persist_iframe.html";
+  let mhtmlFile = await saveAsMHTML("iframe_test", uri);
+  let content = await readMHTML(mhtmlFile);
+  let { parts } = parseMHTML(content);
+
+  let mainPart = findPartByContentLocation(parts, "file_persist_iframe.html");
+  ok(mainPart, "Main frame part should be present");
+  ok(
+    mainPart?.decodedBody.includes("Main Frame"),
+    "Main frame content should be present in decoded part"
+  );
+
+  let subframePart = findPartByContentLocation(
+    parts,
+    "file_persist_subframe.html"
+  );
+  ok(subframePart, "Subframe part should be present");
+  ok(
+    subframePart?.decodedBody.includes("Subframe Content ✓"),
+    "Subframe content should be present in decoded part"
+  );
+});
+
+add_task(async function test_mhtml_embeds_nested_css_image_resources() {
+  info("Testing nested CSS background-image resource embedding");
+
+  let uri = contentBase + "file_persist_css_bg.html";
+  let mhtmlFile = await saveAsMHTML("css_bg_test", uri);
+  let content = await readMHTML(mhtmlFile);
+  let { parts } = parseMHTML(content);
+
+  ok(
+    findPartByContentLocation(parts, "file_persist_bg.css"),
+    "Linked stylesheet should be embedded"
+  );
+  ok(
+    findPartByContentLocation(parts, "file_persist_image.png"),
+    "Nested CSS background image should be embedded"
+  );
+});
+
+add_task(async function test_mhtml_embeds_nested_css_font_resources() {
+  info("Testing nested CSS @font-face resource embedding");
+
+  let uri = contentBase + "file_persist_font.html";
+  let mhtmlFile = await saveAsMHTML("css_font_test", uri);
+  let content = await readMHTML(mhtmlFile);
+  let { parts } = parseMHTML(content);
+
+  ok(
+    findPartByContentLocation(parts, "file_persist_font.css"),
+    "Font stylesheet should be embedded"
+  );
+  ok(
+    findPartByContentLocation(parts, "file_persist_font.woff2"),
+    "Nested @font-face font resource should be embedded"
+  );
 });

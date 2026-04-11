@@ -18,7 +18,15 @@ support-files = [
 # because they exercise the same nsIWebBrowserPersist interface.
 ["browser_persist_mhtml.js"]
 support-files = [
+  "file_persist_bg.css",
+  "file_persist_css_bg.html",
+  "file_persist_font.css",
+  "file_persist_font.html",
+  "file_persist_font.woff2",
+  "file_persist_iframe.html",
   "file_persist_simple.html",
+  "file_persist_subframe.html",
+  "file_persist_unicode.html",
   "file_persist_image.png",
 ]
 

@@ -1,0 +1,8 @@
+@font-face {
+  font-family: "MHTMLExternalFont";
+  src: url("file_persist_font.woff2") format("woff2");
+}
+
+body {
+  font-family: "MHTMLExternalFont", sans-serif;
+}

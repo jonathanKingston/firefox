@@ -1,0 +1,2 @@
+This is a tiny placeholder woff2 fixture used to verify that CSS-discovered
+font URLs are fetched and embedded in saved MHTML output.

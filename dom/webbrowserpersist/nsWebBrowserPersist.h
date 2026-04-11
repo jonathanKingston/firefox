@@ -145,9 +145,9 @@ class nsWebBrowserPersist final : public nsIInterfaceRequestor,
   struct MHTMLResourceData;
   nsresult CollectMHTMLResource(nsIRequest* aRequest, nsIInputStream* aStream,
                                 uint64_t aOffset, uint32_t aCount);
+  nsresult QueueMHTMLCSSResources(nsISupports* aResourceKey);
   void ExtractCSSResources(const nsCString& aCSS, nsIURI* aBaseURI,
                            nsTArray<nsCString>& aURLs);
-  nsresult DownloadCSSResources();
 
   nsCOMPtr<nsIURI> mCurrentDataPath;
   bool mCurrentDataPathIsRelative;

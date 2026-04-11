@@ -161,9 +161,10 @@ struct nsWebBrowserPersist::MHTMLResourceData {
   nsCOMPtr<nsIURI> mURI;
   nsCString mContentType;
   nsTArray<uint8_t> mData;
+  bool mQueuedCSSDependencies;
 
   explicit MHTMLResourceData(nsIURI* aURI, const nsACString& aContentType)
-      : mURI(aURI), mContentType(aContentType) {}
+      : mURI(aURI), mContentType(aContentType), mQueuedCSSDependencies(false) {}
 };
 
 class nsWebBrowserPersist::OnWalk final
@@ -895,6 +896,15 @@ NS_IMETHODIMP nsWebBrowserPersist::OnStopRequest(nsIRequest* request,
   nsCOMPtr<nsISupports> keyPtr = do_QueryInterface(request);
   OutputData* data = mOutputMap.Get(keyPtr);
   if (data) {
+    if (IsSavingAsMHTML() && NS_SUCCEEDED(status)) {
+      nsresult rv = QueueMHTMLCSSResources(keyPtr);
+      if (NS_FAILED(rv)) {
+        SendErrorStatusChange(true, rv, request, data->mFile);
+        EndDownload(rv);
+        return rv;
+      }
+    }
+
     if (NS_SUCCEEDED(mPersistResult) && NS_FAILED(status)) {
       SendErrorStatusChange(true, status, request, data->mFile);
     }
@@ -2840,9 +2850,8 @@ void nsWebBrowserPersist::ExtractCSSResources(const nsCString& aCSS,
     }
 
     const char* importURL = importStart + strlen("@import");
-    while (importURL < end &&
-           (*importURL == ' ' || *importURL == '\t' || *importURL == '\n' ||
-            *importURL == '\r')) {
+    while (importURL < end && (*importURL == ' ' || *importURL == '\t' ||
+                               *importURL == '\n' || *importURL == '\r')) {
       importURL++;
     }
 
@@ -2872,126 +2881,35 @@ void nsWebBrowserPersist::ExtractCSSResources(const nsCString& aCSS,
   }
 }
 
-// Download additional CSS resources (fonts, images referenced in CSS)
-nsresult nsWebBrowserPersist::DownloadCSSResources() {
-  auto hasResourceForSpec = [this](const nsACString& aSpec) {
-    for (const auto& entry : mMHTMLResources) {
-      MHTMLResourceData* existingData = entry.GetWeak();
-      if (!existingData || !existingData->mURI) {
-        continue;
-      }
-      nsAutoCString existingSpec;
-      if (NS_SUCCEEDED(existingData->mURI->GetSpec(existingSpec)) &&
-          existingSpec.Equals(aSpec)) {
-        return true;
-      }
-    }
-    return false;
-  };
-
-  nsTArray<nsCString> urlsToDownload;
-  auto queueResolvedURL = [&](const nsACString& aRawURL, nsIURI* aBaseURI) {
-    nsCOMPtr<nsIURI> resolvedURI;
-    nsresult rv =
-        NS_NewURI(getter_AddRefs(resolvedURI), aRawURL, nullptr, aBaseURI);
-    if (NS_FAILED(rv)) {
-      return;
-    }
-
-    nsAutoCString resolvedSpec;
-    rv = resolvedURI->GetSpec(resolvedSpec);
-    if (NS_FAILED(rv) || resolvedSpec.IsEmpty()) {
-      return;
-    }
-
-    if (!hasResourceForSpec(resolvedSpec) &&
-        !urlsToDownload.Contains(resolvedSpec)) {
-      urlsToDownload.AppendElement(resolvedSpec);
-    }
-  };
-
-  // First pass: extract URLs from currently downloaded CSS resources.
-  for (const auto& entry : mMHTMLResources) {
-    MHTMLResourceData* resData = entry.GetWeak();
-    if (!resData || !resData->mURI || resData->mData.IsEmpty()) {
-      continue;
-    }
-
-    if (!StringBeginsWith(resData->mContentType, "text/css"_ns)) {
-      continue;
-    }
-
-    nsCString cssContent(reinterpret_cast<const char*>(resData->mData.Elements()),
-                         resData->mData.Length());
-    nsTArray<nsCString> urls;
-    ExtractCSSResources(cssContent, resData->mURI, urls);
-    for (const auto& relURL : urls) {
-      queueResolvedURL(relURL, resData->mURI);
-    }
+nsresult nsWebBrowserPersist::QueueMHTMLCSSResources(
+    nsISupports* aResourceKey) {
+  MHTMLResourceData* resource = mMHTMLResources.Get(aResourceKey);
+  if (!resource || !resource->mURI || resource->mData.IsEmpty() ||
+      resource->mQueuedCSSDependencies ||
+      !StringBeginsWith(resource->mContentType, "text/css"_ns)) {
+    return NS_OK;
   }
+  resource->mQueuedCSSDependencies = true;
 
-  // Keep downloading discovered resources; newly-downloaded CSS files can
-  // discover additional URLs.
-  for (uint32_t i = 0; i < urlsToDownload.Length(); i++) {
-    const nsCString& urlSpec = urlsToDownload[i];
-    if (hasResourceForSpec(urlSpec)) {
+  NS_ENSURE_TRUE(!mDocList.IsEmpty(), NS_ERROR_UNEXPECTED);
+  NS_ENSURE_TRUE(mDocList[0] && mDocList[0]->mDocument, NS_ERROR_UNEXPECTED);
+
+  nsCString cssContent(
+      reinterpret_cast<const char*>(resource->mData.Elements()),
+      resource->mData.Length());
+  nsTArray<nsCString> urls;
+  ExtractCSSResources(cssContent, resource->mURI, urls);
+
+  for (const nsCString& url : urls) {
+    nsCOMPtr<nsIURI> resolvedURI;
+    if (NS_FAILED(NS_NewURI(getter_AddRefs(resolvedURI), url, nullptr,
+                            resource->mURI))) {
       continue;
     }
 
-    nsCOMPtr<nsIURI> resourceURI;
-    nsresult rv = NS_NewURI(getter_AddRefs(resourceURI), urlSpec);
-    if (NS_FAILED(rv)) {
-      continue;
-    }
-
-    nsCOMPtr<nsIChannel> channel;
-    rv = CreateChannelFromURI(resourceURI, getter_AddRefs(channel));
-    if (NS_FAILED(rv) || !channel) {
-      if (mPersistFlags & PERSIST_FLAGS_FAIL_ON_BROKEN_LINKS) {
-        return rv;
-      }
-      continue;
-    }
-
-    SetApplyConversionIfNeeded(channel);
-
-    nsCOMPtr<nsIInputStream> inputStream;
-    rv = channel->Open(getter_AddRefs(inputStream));
-    if (NS_FAILED(rv) || !inputStream) {
-      if (mPersistFlags & PERSIST_FLAGS_FAIL_ON_BROKEN_LINKS) {
-        return rv;
-      }
-      continue;
-    }
-
-    nsAutoCString contentType;
-    channel->GetContentType(contentType);
-
-    nsCString resourceContent;
-    rv = NS_ConsumeStream(inputStream, UINT32_MAX, resourceContent);
-    if (NS_FAILED(rv)) {
-      if (mPersistFlags & PERSIST_FLAGS_FAIL_ON_BROKEN_LINKS) {
-        return rv;
-      }
-      continue;
-    }
-
-    auto resourceData = MakeUnique<MHTMLResourceData>(resourceURI, contentType);
-    resourceData->mData.AppendElements(
-        reinterpret_cast<const uint8_t*>(resourceContent.BeginReading()),
-        resourceContent.Length());
-
-    nsCOMPtr<nsISupports> keyPtr = do_QueryInterface(resourceURI);
-    mMHTMLResources.InsertOrUpdate(keyPtr, std::move(resourceData));
-
-    // Recursively discover nested URLs in downloaded CSS.
-    if (StringBeginsWith(contentType, "text/css"_ns)) {
-      nsTArray<nsCString> nestedURLs;
-      ExtractCSSResources(resourceContent, resourceURI, nestedURLs);
-      for (const auto& nestedURL : nestedURLs) {
-        queueResolvedURL(nestedURL, resourceURI);
-      }
-    }
+    nsresult rv = StoreURI(resolvedURI, mDocList[0]->mDocument,
+                           nsIContentPolicy::TYPE_OTHER);
+    NS_ENSURE_SUCCESS(rv, rv);
   }
 
   return NS_OK;
@@ -3033,10 +2951,7 @@ nsresult nsWebBrowserPersist::SerializeAsMHTML() {
     return NS_ERROR_UNEXPECTED;
   }
 
-  // Parse CSS files and extract font URLs
-  nsresult rv = DownloadCSSResources();
-  NS_ENSURE_SUCCESS(rv, rv);
-
+  nsresult rv;
   DocData* mainDoc = mDocList[0];
 
   nsCOMPtr<nsIOutputStream> outputStream;

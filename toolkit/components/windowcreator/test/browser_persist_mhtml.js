@@ -198,7 +198,11 @@ add_task(async function test_mhtml_basic() {
   // Check HTML content.
   ok(content.includes("text/html"), "Should contain HTML content");
   ok(content.includes("MHTML Test Page"), "Should contain page title");
-  ok(parts.length >= 2, "Should include HTML and at least one resource part");
+  Assert.greaterOrEqual(
+    parts.length,
+    2,
+    "Should include HTML and at least one resource part"
+  );
 
   // Check scripts are stripped.
   ok(!content.includes("<script"), "Should not contain script tags");

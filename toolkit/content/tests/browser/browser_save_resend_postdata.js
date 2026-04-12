@@ -9,6 +9,12 @@ let MockFilePicker = SpecialPowers.MockFilePicker;
 MockFilePicker.init(window.browsingContext);
 
 add_task(async function test_inner_frame_save_uses_inner_post_data_only() {
+  let saveConverterPref = "browser.download.save_converter_index";
+  let hadSaveConverterPref = Services.prefs.prefHasUserValue(saveConverterPref);
+  let oldSaveConverterPref = hadSaveConverterPref
+    ? Services.prefs.getIntPref(saveConverterPref)
+    : null;
+
   let browser = gBrowser.selectedBrowser;
   BrowserTestUtils.startLoadingURIString(gBrowser, OUTER_POST_FORM_URL);
   await BrowserTestUtils.browserLoaded(browser, false, OUTER_POST_FORM_URL);
@@ -66,6 +72,11 @@ add_task(async function test_inner_frame_save_uses_inner_post_data_only() {
   };
 
   registerCleanupFunction(() => {
+    if (hadSaveConverterPref) {
+      Services.prefs.setIntPref(saveConverterPref, oldSaveConverterPref);
+    } else if (Services.prefs.prefHasUserValue(saveConverterPref)) {
+      Services.prefs.clearUserPref(saveConverterPref);
+    }
     mockTransferRegisterer.unregister();
     MockFilePicker.cleanup();
     destDir.remove(true);

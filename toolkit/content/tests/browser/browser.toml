@@ -246,9 +246,6 @@ support-files = [
   "data/post_form_inner.sjs",
   "data/post_form_outer.sjs",
 ]
-skip-if = [
-  "true", # Bug ?????? - test directly manipulates content (gBrowser.contentDocument.getElementById("postForm").submit();)
-]
 
 ["browser_save_webpage_wrapping.js"]
 support-files = ["file_save_webpage_wrapping.html"]
